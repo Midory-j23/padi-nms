@@ -1,0 +1,82 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 244 246 248;
+  --panel: 255 255 255;
+  --sunken: 236 240 243;
+  --line: 214 221 228;
+  --ink: 22 32 43;
+  --dim: 96 112 128;
+  --accent: 14 116 144;
+  --up: 22 138 85;
+  --warn: 196 120 10;
+  --down: 200 50 50;
+  --info: 70 100 190;
+}
+[data-theme="dark"] {
+  --bg: 14 20 27;
+  --panel: 21 29 38;
+  --sunken: 17 24 32;
+  --line: 40 53 66;
+  --ink: 228 235 242;
+  --dim: 140 157 173;
+  --accent: 64 190 214;
+  --up: 62 190 125;
+  --warn: 232 166 52;
+  --down: 240 98 98;
+  --info: 128 156 240;
+}
+
+html, body, #root { height: 100%; }
+
+/* Persian text uses Vazirmatn first, so Persian digits and Latin letters share one design. */
+:lang(fa) body { font-family: "Vazirmatn Variable", "Public Sans Variable", Tahoma, system-ui, sans-serif; font-size: 15px; }
+
+/* Hostnames, IP addresses and port names stay left-to-right inside right-to-left text. */
+.ltr { direction: ltr; unicode-bidi: isolate; display: inline-block; }
+body {
+  @apply bg-bg text-ink font-sans antialiased;
+  font-size: 14px;
+}
+:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+
+
+/* ---------- Mobile ---------- */
+html { -webkit-text-size-adjust: 100%; }
+body { overflow-x: hidden; }
+
+/* Inputs below 16px make iOS zoom the page on focus. */
+@media (max-width: 639px) {
+  input:not([type="checkbox"]):not([type="radio"]), select, textarea { font-size: 16px; }
+}
+/* Comfortable touch targets. */
+@media (pointer: coarse) {
+  button, select, input:not([type="checkbox"]):not([type="radio"]) { min-height: 40px; }
+  input[type="checkbox"], input[type="radio"] { width: 1.15rem; height: 1.15rem; }
+}
+
+/* Tables become stacked cards on phones. data-label is filled in from the column headers by Layout. */
+@media (max-width: 639px) {
+  table.rt { min-width: 0 !important; }
+  table.rt, table.rt tbody { display: block; }
+  table.rt thead { display: none; }
+  table.rt tr { display: block; padding: 0.5rem 1rem; }
+  table.rt td {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 1rem;
+    padding: 0.3rem 0 !important; max-width: none !important; white-space: normal !important; text-align: end;
+  }
+  table.rt td::before {
+    content: attr(data-label); flex-shrink: 0; text-align: start;
+    color: rgb(var(--dim)); font-size: 0.75rem;
+  }
+  table.rt td:not([data-label])::before { content: none; }
+  table.rt td.truncate, table.rt td[class*="truncate"] { overflow: visible; text-overflow: clip; }
+}
+
+/* Dialogs never touch the screen edge. */
+dialog { max-width: calc(100vw - 2rem); }
