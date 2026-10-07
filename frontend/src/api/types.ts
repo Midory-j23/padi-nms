@@ -19,6 +19,9 @@ export interface Device {
   device_id: number;
   hostname: string;
   sysName?: string;
+  display?: string;
+  disabled?: number | boolean;
+  ignore?: number | boolean;
   ip?: string;
   os?: string;
   hardware?: string;

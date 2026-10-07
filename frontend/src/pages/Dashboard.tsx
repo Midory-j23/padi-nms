@@ -7,6 +7,7 @@ import { listFrom } from "../lib/extract";
 import { isUp, useFormat } from "../lib/format";
 import { isolate, useI18n } from "../lib/i18n";
 import { Empty, ErrorNote, Panel } from "../components/ui";
+import DeviceBoard from "../components/DeviceBoard";
 import type { LogEntry, Service } from "../api/types";
 import { serviceLevel } from "./Services";
 import { entryText, entryTime } from "./Logs";
@@ -52,6 +53,12 @@ export default function Dashboard() {
   const svcBad = svc.filter((s) => serviceLevel(s) > 0);
   const recent = (events.data ? listFrom<LogEntry>(events.data.data, "logs") : []).slice(0, 8);
 
+  // How many active alerts / failing services each device has (drives the amber "Problem" tiles).
+  const problems = new Map<number, number>();
+  [...active, ...svcBad].forEach((x) => {
+    if (x.device_id !== undefined) problems.set(x.device_id, (problems.get(x.device_id) ?? 0) + 1);
+  });
+
   const items: Item[] = [
     ...down.map((d): Item => ({
       key: `d${d.device_id}`, rank: 0, kind: t("Device down"), tone: "text-down",
@@ -87,6 +94,8 @@ export default function Dashboard() {
         <Stat to="/alerts" label={t("Active alerts")} value={alerts.isLoading ? "…" : f.num(active.length)} sub={critical.length ? t("{n} critical", { n: f.num(critical.length) }) : undefined} tone={critical.length ? "text-down" : active.length ? "text-warn" : "text-ink"} />
         <Stat to="/services" label={t("Services not ok")} value={services.isLoading ? "…" : f.num(svcBad.length)} sub={svc.length ? t("of {n}", { n: f.num(svc.length) }) : undefined} tone={svcBad.length ? "text-warn" : "text-ink"} />
       </div>
+
+      <DeviceBoard devices={list} problems={problems} loading={devices.isLoading} />
 
       <div className="grid gap-5 lg:grid-cols-5">
         <div className="lg:col-span-3">

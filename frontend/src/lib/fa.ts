@@ -390,4 +390,11 @@ export const fa: Record<string, string> = {
   "Enter a port range between 1 and 65535.": "بازه پورت را بین ۱ تا ۶۵۵۳۵ وارد کنید.",
   "Too many scans are running. Wait for one to finish.": "اسکن‌های زیادی در حال اجراست. صبر کنید یکی تمام شود.",
   "This scan no longer exists. Start a new one.": "این اسکن دیگر وجود ندارد. اسکن جدیدی شروع کنید.",
+
+  // Device board
+  "Device status": "وضعیت دستگاه‌ها",
+  "{n} devices": "{n} دستگاه",
+  "Filter by site": "فیلتر بر اساس سایت",
+  "{n} active issues": "{n} مشکل فعال",
+  "Problem": "مشکل‌دار",
 };
