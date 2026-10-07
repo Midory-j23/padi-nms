@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Pencil, Trash2 } from "lucide-react";
 import { api } from "../api/client";
 import type { Availability, Outage, Port } from "../api/types";
 import { useRefresh } from "../lib/refresh";
@@ -10,6 +10,7 @@ import { isUp, useFormat } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import { Empty, ErrorNote, Meter, Panel, StatusBadge } from "../components/ui";
 import OpenPorts from "../components/OpenPorts";
+import EditDeviceDialog from "../components/EditDeviceDialog";
 import RemoveDeviceDialog from "../components/RemoveDeviceDialog";
 
 const PERIODS: Record<number, string> = { 86400: "24 hours", 604800: "7 days", 2592000: "30 days", 31536000: "1 year" };
@@ -36,6 +37,7 @@ export default function DeviceDetail() {
   const ports = useQuery({ queryKey: ["device", id, "ports"], queryFn: () => api.devicePorts(id), refetchInterval: ms });
   const [onlyUp, setOnlyUp] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   const d = device.data?.data;
   const h = health.data ? summarizeHealth(health.data.data) : undefined;
@@ -58,12 +60,19 @@ export default function DeviceDetail() {
             <h1 className="text-xl font-semibold tracking-tight">{d.sysName || d.hostname}</h1>
             <StatusBadge up={isUp(d.status)} />
             <button
+              onClick={() => setEditing(true)}
+              className="ms-auto flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-sm hover:bg-sunken"
+            >
+              <Pencil size={14} aria-hidden /> {t("Edit device")}
+            </button>
+            <button
               onClick={() => setRemoving(true)}
-              className="ms-auto flex items-center gap-1.5 rounded-md border border-down/50 px-3 py-1.5 text-sm text-down hover:bg-down/10"
+              className="flex items-center gap-1.5 rounded-md border border-down/50 px-3 py-1.5 text-sm text-down hover:bg-down/10"
             >
               <Trash2 size={14} aria-hidden /> {t("Remove device")}
             </button>
           </div>
+          <EditDeviceDialog open={editing} onClose={() => setEditing(false)} id={id} device={d} />
           <RemoveDeviceDialog open={removing} onClose={() => setRemoving(false)} id={id} hostname={d.hostname} label={d.sysName || d.hostname} />
 
           <Panel title={t("Overview")}>

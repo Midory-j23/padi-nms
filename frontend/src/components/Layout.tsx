@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import ErrorBoundary from "./ErrorBoundary";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useIsFetching, useQueryClient, useQuery } from "@tanstack/react-query";
 import {
@@ -143,7 +144,7 @@ export default function Layout() {
     <div className="flex h-full">
       <aside className="hidden w-56 shrink-0 flex-col border-e border-line bg-panel md:flex">
         <div className="flex h-14 items-center gap-2 border-b border-line px-5">
-          <div className="grid h-7 w-7 place-items-center rounded-md bg-accent text-sm font-bold text-bg">P</div>
+          <img src="/logo.png" alt="" width={44} height={40} className="h-10 w-auto shrink-0 dark:invert" />
           <span className="text-[15px] font-semibold tracking-tight">Padi NMS</span>
         </div>
         <NavList />
@@ -155,7 +156,7 @@ export default function Layout() {
           <aside id="mobile-menu" className="absolute inset-y-0 start-0 flex w-64 max-w-[80vw] flex-col border-e border-line bg-panel shadow-xl" aria-label={t("Main navigation")}>
             <div className="flex h-14 shrink-0 items-center justify-between border-b border-line px-4">
               <div className="flex items-center gap-2">
-                <div className="grid h-7 w-7 place-items-center rounded-md bg-accent text-sm font-bold text-bg">P</div>
+                <img src="/logo.png" alt="" width={44} height={40} className="h-10 w-auto shrink-0 dark:invert" />
                 <span className="text-[15px] font-semibold tracking-tight">Padi NMS</span>
               </div>
               <button onClick={() => setMenu(false)} aria-label={t("Close menu")} className="grid h-8 w-8 place-items-center rounded-md border border-line hover:bg-sunken">
@@ -212,7 +213,7 @@ export default function Layout() {
           </div>
         </header>
         <main ref={mainRef} className="min-h-0 flex-1 overflow-y-auto p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4 md:p-6">
-          <Outlet />
+          <ErrorBoundary resetKey={pathname}><Outlet /></ErrorBoundary>
         </main>
       </div>
     </div>

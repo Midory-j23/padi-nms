@@ -20,6 +20,9 @@ export interface Device {
   hostname: string;
   sysName?: string;
   display?: string;
+  notes?: string | null;
+  purpose?: string | null;
+  port?: number;
   disabled?: number | boolean;
   ignore?: number | boolean;
   ip?: string;

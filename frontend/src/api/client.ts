@@ -41,11 +41,24 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// LibreNMS can send an object where the UI expects text (for example a location record). Flatten it.
+function flatDevice(d: Device): Device {
+  const out = { ...d } as unknown as Record<string, unknown>;
+  for (const k of ["location", "display", "sysName", "hostname", "hardware", "os", "type", "notes", "purpose", "version", "serial", "sysDescr"]) {
+    const v = out[k];
+    if (v && typeof v === "object") {
+      const o = v as Record<string, unknown>;
+      out[k] = String(Array.isArray(v) ? v.join(", ") : o.location ?? o.name ?? o.display ?? "");
+    }
+  }
+  return out as unknown as Device;
+}
+
 export const api = {
   health: () => request<Health>("/health"),
-  devices: () => request<Envelope<Device[]>>("/devices?per_page=5000"),
+  devices: () => request<Envelope<Device[]>>("/devices?per_page=5000").then((r) => ({ ...r, data: (r.data ?? []).map(flatDevice) })),
   alerts: (query = "") => request<Envelope<Alert[]>>(`/alerts${query ? `${query}&` : "?"}per_page=1000`),
-  device: (id: string | number) => request<Envelope<Device>>(`/devices/${id}`),
+  device: (id: string | number) => request<Envelope<Device>>(`/devices/${id}`).then((r) => ({ ...r, data: r.data ? flatDevice(r.data) : r.data })),
   deviceHealth: (id: string | number) => request<Raw>(`/devices/${id}/health`),
   deviceAvailability: (id: string | number) => request<Raw>(`/devices/${id}/availability`),
   deviceOutages: (id: string | number) => request<Raw>(`/devices/${id}/outages`),
@@ -75,6 +88,8 @@ export const api = {
     request<Raw>("/devices", { method: "POST", body: JSON.stringify(body) }),
   // LibreNMS: DELETE /api/v0/devices/:hostname (the proxy maps the id).
   removeDevice: (id: string | number) => request<Raw>(`/devices/${id}`, { method: "DELETE" }),
+  editDevice: (id: string | number, body: Record<string, string | number | boolean>) =>
+    request<Raw>(`/devices/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   scanNetwork: (target: string) =>
     request<Raw>("/discovery/scan", { method: "POST", body: JSON.stringify({ target }) }),
   bulkAddDevices: (body: Record<string, string | boolean | string[]>) =>

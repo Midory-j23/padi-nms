@@ -138,11 +138,27 @@ async def test_settings(b: SettingsBody):
 DeviceStatus = Literal["all", "active", "ignored", "up", "down", "disabled"]
 
 
+TEXT_FIELDS = ("location", "display", "sysName", "hostname", "hardware", "os", "type", "notes", "purpose",
+               "version", "serial", "sysDescr")
+
+
+def flat_device(d: dict) -> dict:
+    """LibreNMS sometimes returns the location as an object ({"id":..,"location":"Name",..}) instead of a
+    string, especially for a single device once a location is set. The UI expects plain text."""
+    for f in TEXT_FIELDS:
+        v = d.get(f)
+        if isinstance(v, dict):
+            d[f] = str(v.get("location") or v.get("name") or v.get("display") or "")
+        elif isinstance(v, (list, tuple)):
+            d[f] = ", ".join(str(x) for x in v)
+    return d
+
+
 @router.get("/devices")
 async def list_devices(status: DeviceStatus = "all", q_: Optional[str] = Query(None, alias="q"),
                        os: Optional[str] = None, location: Optional[str] = None, sort: str = "hostname",
                        desc: bool = False, page: int = Query(1, ge=1), per_page: int = Query(50, ge=1, le=5000)):
-    items = list((await lnms.get("/devices", {"type": status})).get("devices", []))
+    items = [flat_device(d) for d in (await lnms.get("/devices", {"type": status})).get("devices", [])]
     if q_:
         n = q_.lower()
         items = [d for d in items if any(n in str(d.get(f) or "").lower()
@@ -195,6 +211,51 @@ async def add_device(body: dict):
     return {"source": "live", "data": r}
 
 
+EDIT_TEXT_LIMITS = {"display": 255, "notes": 2000, "purpose": 255, "type": 32, "location": 255, "community": 255}
+
+
+@router.patch("/devices/{device_id}")
+async def edit_device(device_id: str, body: dict):
+    """Edit an allow-listed set of device fields through LibreNMS PATCH /devices/{id}."""
+    fields: list[str] = []
+    data: list = []
+
+    def put(name, value):
+        fields.append(name)
+        data.append(value)
+
+    for name, limit in EDIT_TEXT_LIMITS.items():
+        if name in body:
+            v = str(body[name] if body[name] is not None else "").strip()
+            if len(v) > limit:
+                raise LibreNMSError(422, "invalid", "One of the values is too long.")
+            if name == "community" and not v:
+                continue  # blank means "keep the current community"
+            if name == "location":
+                put("override_sysLocation", 1)
+            put(name, v)
+    if "snmpver" in body:
+        if body["snmpver"] not in ("v1", "v2c", "v3"):
+            raise LibreNMSError(422, "invalid", "SNMP version must be v1, v2c or v3.")
+        put("snmpver", body["snmpver"])
+    if "port" in body:
+        try:
+            port = int(body["port"])
+        except (TypeError, ValueError):
+            port = 0
+        if not 1 <= port <= 65535:
+            raise LibreNMSError(422, "invalid", "The SNMP port must be between 1 and 65535.")
+        put("port", port)
+    for flag in ("disabled", "ignore"):
+        if flag in body:
+            put(flag, 1 if body[flag] in (1, True, "1", "true") else 0)
+    if not fields:
+        raise LibreNMSError(422, "invalid", "There is nothing to change.")
+    r = await lnms.request("PATCH", f"/devices/{q(device_id)}", json={"field": fields, "data": data})
+    lnms.invalidate("/devices")
+    return {"source": "live", "data": r}
+
+
 @router.delete("/devices/{device_id}")
 async def remove_device(device_id: str):
     r = await lnms.request("DELETE", f"/devices/{q(device_id)}")
@@ -208,7 +269,7 @@ async def get_device(device_id: str):
     d = (await lnms.get(f"/devices/{q(device_id)}")).get("devices") or []
     if not d:
         raise LibreNMSError(404, "not_found", "Device not found.")
-    return ok(d[0])
+    return ok(flat_device(d[0]))
 
 
 @router.get("/devices/{device_id}/availability")
