@@ -1,4 +1,5 @@
 import { getBackendUrl } from "../lib/backend";
+import type { PromDevice, PromSeries, PromStatus } from "./prometheus";
 import type { Alert, Device, Envelope, Health } from "./types";
 
 // Sub-resources are read through tolerant helpers, so they are typed as unknown.
@@ -50,9 +51,14 @@ export const api = {
   deviceOutages: (id: string | number) => request<Raw>(`/devices/${id}/outages`),
   topology: () => request<Raw>("/topology"),
   settings: () => request<unknown>("/settings"),
-  saveSettings: (body: { url?: string; token?: string }) =>
+  saveSettings: (body: { url?: string; token?: string; prometheus_url?: string }) =>
     request<unknown>("/settings", { method: SETTINGS_METHOD, body: JSON.stringify(body) }),
   services: () => request<Raw>("/services"),
+  prometheusStatus: () => request<PromStatus>("/prometheus/status"),
+  prometheusRange: (query: string, range: number) =>
+    request<Envelope<{ series: PromSeries[] }>>(`/prometheus/query_range?${new URLSearchParams({ query, range: String(range) })}`),
+  devicePrometheus: (id: string | number, range: number) =>
+    request<Envelope<PromDevice>>(`/devices/${id}/prometheus?range=${range}`),
   // UNVERIFIED: the proxy's query parameters for /api/events (type, limit, start, hostname).
   events: (params: { type?: string; limit?: number; start?: number; hostname?: string } = {}) => {
     const qs = new URLSearchParams();
@@ -73,5 +79,9 @@ export const api = {
     request<Raw>("/discovery/scan", { method: "POST", body: JSON.stringify({ target }) }),
   bulkAddDevices: (body: Record<string, string | boolean | string[]>) =>
     request<Raw>("/discovery/add", { method: "POST", body: JSON.stringify(body) }),
+  startPortScan: (host: string, mode: "known" | "range", start: number, end: number) =>
+    request<Raw>("/discovery/ports/start", { method: "POST", body: JSON.stringify({ host, mode, start, end }) }),
+  portScanStatus: (id: string) => request<Raw>(`/discovery/ports/${id}`),
+  cancelPortScan: (id: string) => request<Raw>(`/discovery/ports/${id}/cancel`, { method: "POST" }),
   devicePorts: (id: string | number) => request<Raw>(`/devices/${id}/ports`),
 };

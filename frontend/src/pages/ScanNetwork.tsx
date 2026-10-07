@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useI18n } from "../lib/i18n";
+import OpenPorts from "../components/OpenPorts";
 import { ErrorNote, Panel, translateMessage } from "../components/ui";
 
 interface Found { ip: string; name: string; already_added: boolean }
@@ -190,6 +191,8 @@ export default function ScanNetwork() {
           </div>
         </Panel>
       )}
+
+      <OpenPorts />
     </div>
   );
 }

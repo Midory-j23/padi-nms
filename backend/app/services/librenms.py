@@ -49,7 +49,7 @@ async def request(method: str, path: str, params=None, json=None, raw=False,
     try:
         r = await _http().request(
             method, base + API_PREFIX + path, params=params, json=json,
-            headers={"Authorization": f"Bearer {tok}", "Accept": "application/json"},
+            headers={"X-Auth-Token": tok, "Accept": "application/json"},
             timeout=timeout or settings.request_timeout)
     except httpx.TimeoutException:
         raise LibreNMSError(504, "timeout", "LibreNMS server did not respond in time.") from None

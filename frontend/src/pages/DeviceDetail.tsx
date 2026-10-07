@@ -9,6 +9,7 @@ import { listFrom, num, summarizeHealth } from "../lib/extract";
 import { isUp, useFormat } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import { Empty, ErrorNote, Meter, Panel, StatusBadge } from "../components/ui";
+import OpenPorts from "../components/OpenPorts";
 import RemoveDeviceDialog from "../components/RemoveDeviceDialog";
 
 const PERIODS: Record<number, string> = { 86400: "24 hours", 604800: "7 days", 2592000: "30 days", 31536000: "1 year" };
@@ -161,6 +162,10 @@ export default function DeviceDetail() {
           </div>
         )}
       </Panel>
+
+      {d && (d.ip || d.hostname) && /^\d{1,3}(\.\d{1,3}){3}$/.test(String(d.ip || d.hostname)) && (
+        <OpenPorts host={String(d.ip || d.hostname)} />
+      )}
 
       <Panel
         title={portList.length ? `${t("Ports")} (${f.num(portList.length)})` : t("Ports")}

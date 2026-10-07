@@ -21,6 +21,7 @@ const later = (title: string) => (
 
 // Charts pull in a large library, so load that page only when it is opened.
 const Performance = lazy(() => import("./pages/Performance"));
+const Metrics = lazy(() => import("./pages/Metrics"));
 
 export default function App() {
   return (

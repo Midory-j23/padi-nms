@@ -11,6 +11,12 @@ class Settings(BaseSettings):
     verify_ssl: bool = True
     mock_fallback: bool = True
     cors_origins: str = "http://localhost:5173"
+    # Open-port check: by default only private / local addresses may be checked.
+    allow_public_scan: bool = False
+    # Prometheus (optional)
+    prometheus_url: str = ""            # where Padi READS metrics from, e.g. http://localhost:9090
+    metrics_token: str = ""             # if set, GET /metrics requires "Authorization: Bearer <token>"
+    metrics_include_ports: bool = False  # per-port series on /metrics (can be thousands of series)
 
 
 settings = Settings()

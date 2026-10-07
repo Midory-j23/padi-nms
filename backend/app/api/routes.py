@@ -92,13 +92,15 @@ async def health():
 async def get_settings():
     return {"url": settings.librenms_url, "librenms_url": settings.librenms_url, "token_configured": bool(settings.librenms_api_token),
             "request_timeout": settings.request_timeout, "cache_ttl": settings.cache_ttl,
-            "mock_fallback": settings.mock_fallback}  # token is never returned
+            "mock_fallback": settings.mock_fallback,
+            "prometheus_url": settings.prometheus_url}  # token is never returned
 
 
 class SettingsBody(BaseModel):
     librenms_url: Optional[str] = Field(None, validation_alias=AliasChoices("librenms_url", "url"))
     librenms_api_token: Optional[str] = Field(None, validation_alias=AliasChoices("librenms_api_token", "token"))  # write-only
     request_timeout: Optional[float] = None
+    prometheus_url: Optional[str] = None
 
 
 @router.put("/settings")
@@ -110,6 +112,11 @@ async def put_settings(b: SettingsBody):
         settings.librenms_api_token = b.librenms_api_token.strip()
     if b.request_timeout:
         settings.request_timeout = max(1.0, min(b.request_timeout, 120.0))
+    if b.prometheus_url is not None:
+        pu = b.prometheus_url.strip().rstrip("/")
+        if pu and not pu.lower().startswith(("http://", "https://")):
+            raise LibreNMSError(422, "invalid", "The Prometheus address must start with http:// or https://.")
+        settings.prometheus_url = pu
     lnms.reset_client()
     return await get_settings()
 
@@ -535,3 +542,114 @@ async def discovery_add(body: dict):
     return {"source": lnms.state["source"], "data": {"results": results,
                                                      "added": sum(1 for r in results if r["ok"]),
                                                      "failed": sum(1 for r in results if not r["ok"])}}
+
+
+# ---------- open port scan (TCP connect, runs as a background job) ----------
+import uuid  # noqa: E402
+
+KNOWN_PORTS = [20, 21, 22, 23, 25, 53, 80, 81, 110, 111, 123, 135, 137, 138, 139, 143, 161, 162, 179, 389, 443, 445,
+               465, 514, 515, 587, 631, 636, 873, 993, 995, 1433, 1521, 1723, 1883, 2049, 2375, 3000, 3306, 3389,
+               5000, 5060, 5432, 5601, 5800, 5900, 5985, 6000, 6379, 8000, 8008, 8080, 8081, 8088, 8443, 8888,
+               9000, 9090, 9100, 9200, 9443, 27017]
+MAX_PORT_JOBS = 3
+_port_jobs: dict[str, dict] = {}
+
+
+async def _tcp_open(host: str, port: int, sem: asyncio.Semaphore, timeout: float = 0.7) -> bool:
+    async with sem:
+        try:
+            _r, w = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout)
+        except Exception:
+            return False
+        try:
+            w.close()
+            await w.wait_closed()
+        except Exception:
+            pass
+        return True
+
+
+def _service_name(port: int) -> str:
+    try:
+        return socket.getservbyport(port, "tcp")
+    except OSError:
+        return ""
+
+
+async def _run_port_job(job: dict):
+    sem = asyncio.Semaphore(400)  # stays below the Windows select() limit
+
+    async def one(p: int):
+        if job["cancel"]:
+            return
+        ok = await _tcp_open(job["host"], p, sem)
+        job["scanned"] += 1
+        if ok:
+            job["open"].append({"port": p, "service": _service_name(p)})
+
+    try:
+        ports = job["ports"]
+        for i in range(0, len(ports), 2000):
+            if job["cancel"]:
+                break
+            await asyncio.gather(*[one(p) for p in ports[i:i + 2000]])
+        job["status"] = "cancelled" if job["cancel"] else "done"
+    except Exception:
+        job["status"] = "error"
+    finally:
+        job["finished"] = time.time()
+
+
+def _job_view(job_id: str, job: dict) -> dict:
+    return {"id": job_id, "host": job["host"], "status": job["status"], "total": len(job["ports"]),
+            "scanned": job["scanned"], "open": sorted(job["open"], key=lambda o: o["port"])}
+
+
+@router.post("/discovery/ports/start")
+async def start_port_scan(body: dict):
+    raw = str(body.get("host", "")).strip()
+    try:
+        ip = ipaddress.IPv4Address(raw)
+    except ValueError:
+        raise LibreNMSError(422, "invalid", "Enter a valid IPv4 address.")
+    if not (ip.is_private or ip.is_loopback or ip.is_link_local) and not settings.allow_public_scan:
+        raise LibreNMSError(403, "forbidden", "Only private network addresses can be checked.")
+    if body.get("mode") == "range":
+        try:
+            a, b = int(body.get("start", 1)), int(body.get("end", 65535))
+        except (TypeError, ValueError):
+            raise LibreNMSError(422, "invalid", "Enter a port range between 1 and 65535.")
+        if not (1 <= a <= b <= 65535):
+            raise LibreNMSError(422, "invalid", "Enter a port range between 1 and 65535.")
+        ports = list(range(a, b + 1))
+    else:
+        ports = list(KNOWN_PORTS)
+
+    now = time.time()
+    for k in [k for k, j in _port_jobs.items() if j.get("finished") and now - j["finished"] > 600]:
+        del _port_jobs[k]  # forget finished scans after 10 minutes
+    if sum(1 for j in _port_jobs.values() if j["status"] == "running") >= MAX_PORT_JOBS:
+        raise LibreNMSError(429, "busy", "Too many scans are running. Wait for one to finish.")
+
+    job_id = uuid.uuid4().hex[:12]
+    job = {"host": str(ip), "ports": ports, "scanned": 0, "open": [], "status": "running", "cancel": False}
+    _port_jobs[job_id] = job
+    job["task"] = asyncio.create_task(_run_port_job(job))
+    return {"data": _job_view(job_id, job)}
+
+
+@router.get("/discovery/ports/{job_id}")
+async def port_scan_status(job_id: str):
+    job = _port_jobs.get(job_id)
+    if not job:
+        raise LibreNMSError(404, "not_found", "This scan no longer exists. Start a new one.")
+    return {"data": _job_view(job_id, job)}
+
+
+@router.post("/discovery/ports/{job_id}/cancel")
+async def cancel_port_scan(job_id: str):
+    job = _port_jobs.get(job_id)
+    if not job:
+        raise LibreNMSError(404, "not_found", "This scan no longer exists. Start a new one.")
+    job["cancel"] = True
+    return {"data": _job_view(job_id, job)}
