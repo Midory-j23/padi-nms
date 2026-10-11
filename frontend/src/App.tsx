@@ -1,6 +1,10 @@
-import { lazy, Suspense } from "react";
-import { Route, Routes } from "react-router-dom";
+import { lazy, Suspense, type ReactElement } from "react";
+import { Navigate, Route, Routes } from "react-router-dom";
 import Layout from "./components/Layout";
+import { useAuth } from "./lib/auth";
+import Login from "./pages/Login";
+import Users from "./pages/Users";
+import Account from "./pages/Account";
 import Placeholder from "./components/Placeholder";
 import Dashboard from "./pages/Dashboard";
 import Devices from "./pages/Devices";
@@ -23,14 +27,22 @@ const later = (title: string) => (
 const Performance = lazy(() => import("./pages/Performance"));
 const Metrics = lazy(() => import("./pages/Metrics"));
 
+/** Admin-only pages. The backend enforces this too; this just avoids showing a page that cannot work. */
+function AdminOnly({ children }: { children: ReactElement }) {
+  const { isAdmin } = useAuth();
+  return isAdmin ? children : <Navigate to="/" replace />;
+}
+
 export default function App() {
+  const { phase } = useAuth();
+  if (phase !== "authed") return <Login />;
   return (
     <Routes>
       <Route element={<Layout />}>
         <Route index element={<Dashboard />} />
         <Route path="devices" element={<Devices />} />
-        <Route path="devices/new" element={<AddDevice />} />
-        <Route path="devices/scan" element={<ScanNetwork />} />
+        <Route path="devices/new" element={<AdminOnly><AddDevice /></AdminOnly>} />
+        <Route path="devices/scan" element={<AdminOnly><ScanNetwork /></AdminOnly>} />
         <Route path="devices/:id" element={<DeviceDetail />} />
         <Route path="ports" element={<Ports />} />
         <Route path="alerts" element={<Alerts />} />
@@ -39,7 +51,9 @@ export default function App() {
         <Route path="logs" element={<Logs />} />
         <Route path="map" element={<NetworkMap />} />
         <Route path="performance" element={<Suspense fallback={<p className="text-dim">Loading charts</p>}><Performance /></Suspense>} />
-        <Route path="settings" element={<Settings />} />
+        <Route path="settings" element={<AdminOnly><Settings /></AdminOnly>} />
+        <Route path="users" element={<AdminOnly><Users /></AdminOnly>} />
+        <Route path="account" element={<Account />} />
         <Route path="*" element={later("Page not found")} />
       </Route>
     </Routes>

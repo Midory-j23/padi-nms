@@ -121,3 +121,20 @@ export interface TopologyLink {
   protocol?: string;
   remote_platform?: string;
 }
+
+export type Role = "admin" | "observer";
+
+export interface AuthUser {
+  id: number;
+  username: string;
+  full_name: string;
+  role: Role;
+  active: boolean;
+}
+
+export interface ManagedUser extends AuthUser {
+  created_at: number;
+  last_login: number | null;
+  sessions: number;
+  online: boolean;
+}

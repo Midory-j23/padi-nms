@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check } from "lucide-react";
+import { useAuth } from "../lib/auth";
 import { api } from "../api/client";
 import type { Alert } from "../api/types";
 import { useRefresh } from "../lib/refresh";
@@ -101,6 +102,7 @@ export default function Alerts() {
   const [severity, setSeverity] = useState("all");
   const [page, setPage] = useState(0);
   const [target, setTarget] = useState<Alert | null>(null);
+  const { isAdmin } = useAuth();
 
   const query = [STATE_QUERY[state], severity !== "all" ? `severity=${severity}` : ""].filter(Boolean).join("&");
   const q = useQuery({ queryKey: ["alerts", query], queryFn: () => api.alerts(query ? `?${query}` : ""), refetchInterval: ms });
@@ -172,7 +174,7 @@ export default function Alerts() {
                   <td className="px-4 py-2.5 tabular-nums">{f.dateString(a.timestamp)}</td>
                   <td className="px-4 py-2.5">{a.state === 2 ? t("Acknowledged") : a.state === 1 ? t("Active") : t("Cleared")}</td>
                   <td className="px-4 py-2.5 text-end">
-                    {a.state === 1 && alertId(a) !== undefined && (
+                    {isAdmin && a.state === 1 && alertId(a) !== undefined && (
                       <button onClick={() => setTarget(a)} className="inline-flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-xs hover:bg-sunken">
                         <Check size={12} aria-hidden /> {t("Acknowledge")}
                       </button>

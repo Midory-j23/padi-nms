@@ -1,21 +1,26 @@
 import logging
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.auth_routes import router as auth_router, users_router
 from app.api.prometheus import metrics_router, router as prom_router
 from app.api.routes import router
+from app.auth import authorize
 from app.config import settings
 from app.services.librenms import LibreNMSError
 
 log = logging.getLogger("librenms-ui")
 app = FastAPI(title="LibreNMS UI Backend", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],  # "*" allows any
-                   allow_methods=["*"], allow_headers=["*"])
-app.include_router(router)
-app.include_router(prom_router)
-app.include_router(metrics_router)
+                   allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], allow_headers=["Authorization", "Content-Type"])
+# Every data route requires sign-in; observers are read-only (see app/auth.py).
+app.include_router(auth_router)
+app.include_router(users_router)
+app.include_router(router, dependencies=[Depends(authorize)])
+app.include_router(prom_router, dependencies=[Depends(authorize)])
+app.include_router(metrics_router)  # Prometheus scraping uses its own METRICS_TOKEN
 
 
 @app.exception_handler(LibreNMSError)

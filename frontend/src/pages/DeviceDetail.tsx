@@ -7,6 +7,7 @@ import type { Availability, Outage, Port } from "../api/types";
 import { useRefresh } from "../lib/refresh";
 import { listFrom, num, summarizeHealth } from "../lib/extract";
 import { isUp, useFormat } from "../lib/format";
+import { useAuth } from "../lib/auth";
 import { useI18n } from "../lib/i18n";
 import { Empty, ErrorNote, Meter, Panel, StatusBadge } from "../components/ui";
 import OpenPorts from "../components/OpenPorts";
@@ -25,6 +26,7 @@ function Fact({ label, value, ltr }: { label: string; value?: string | number | 
 }
 
 export default function DeviceDetail() {
+  const { isAdmin } = useAuth();
   const { t, dir } = useI18n();
   const f = useFormat();
   const BackIcon = dir === "rtl" ? ChevronRight : ChevronLeft;
@@ -59,6 +61,8 @@ export default function DeviceDetail() {
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-xl font-semibold tracking-tight">{d.sysName || d.hostname}</h1>
             <StatusBadge up={isUp(d.status)} />
+            {isAdmin && (
+              <>
             <button
               onClick={() => setEditing(true)}
               className="ms-auto flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-sm hover:bg-sunken"
@@ -71,9 +75,15 @@ export default function DeviceDetail() {
             >
               <Trash2 size={14} aria-hidden /> {t("Remove device")}
             </button>
+              </>
+            )}
           </div>
+          {isAdmin && (
+            <>
           <EditDeviceDialog open={editing} onClose={() => setEditing(false)} id={id} device={d} />
           <RemoveDeviceDialog open={removing} onClose={() => setRemoving(false)} id={id} hostname={d.hostname} label={d.sysName || d.hostname} />
+            </>
+          )}
 
           <Panel title={t("Overview")}>
             <dl className="grid gap-x-6 gap-y-4 p-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -172,7 +182,7 @@ export default function DeviceDetail() {
         )}
       </Panel>
 
-      {d && (d.ip || d.hostname) && /^\d{1,3}(\.\d{1,3}){3}$/.test(String(d.ip || d.hostname)) && (
+      {isAdmin && d && (d.ip || d.hostname) && /^\d{1,3}(\.\d{1,3}){3}$/.test(String(d.ip || d.hostname)) && (
         <OpenPorts host={String(d.ip || d.hostname)} />
       )}
 

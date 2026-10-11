@@ -7,6 +7,7 @@ import type { Device } from "../api/types";
 import { useRefresh } from "../lib/refresh";
 import { summarizeHealth } from "../lib/extract";
 import { isUp, useFormat } from "../lib/format";
+import { useAuth } from "../lib/auth";
 import { useI18n } from "../lib/i18n";
 import { Empty, ErrorNote, Meter, StatusBadge } from "../components/ui";
 import Pager from "../components/Pager";
@@ -44,6 +45,7 @@ function LoadCells({ id }: { id: number }) {
 }
 
 export default function Devices() {
+  const { isAdmin } = useAuth();
   const { t } = useI18n();
   const f = useFormat();
   const { ms } = useRefresh();
@@ -105,10 +107,12 @@ export default function Devices() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {isAdmin && (<>
           <Link to="/devices/new" className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-2 text-sm font-semibold text-bg">
             <Plus size={14} aria-hidden /> {t("Add device")}
           </Link>
           <Link to="/devices/scan" className="rounded-md border border-line px-3 py-2 text-sm hover:bg-sunken">{t("Scan network")}</Link>
+          </>)}
           <div className="relative w-full sm:w-auto">
             <Search size={14} className="pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-dim" aria-hidden />
             <input

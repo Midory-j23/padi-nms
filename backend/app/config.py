@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173"
     # Open-port check: by default only private / local addresses may be checked.
     allow_public_scan: bool = False
+    # Sign-in. Users and sessions live in a small SQLite file (default: backend/data/padi.db).
+    auth_db_path: str = ""
+    session_hours: int = 12             # normal sign-in lifetime
+    session_remember_days: int = 30     # lifetime when "stay signed in" is ticked
     # Prometheus (optional)
     prometheus_url: str = ""            # where Padi READS metrics from, e.g. http://localhost:9090
     metrics_token: str = ""             # if set, GET /metrics requires "Authorization: Bearer <token>"

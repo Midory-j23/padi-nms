@@ -1,6 +1,7 @@
 import { getBackendUrl } from "../lib/backend";
+import { clearToken, getToken, UNAUTHORIZED_EVENT } from "../lib/session";
 import type { PromDevice, PromSeries, PromStatus } from "./prometheus";
-import type { Alert, Device, Envelope, Health } from "./types";
+import type { Alert, AuthUser, Device, Envelope, Health, ManagedUser } from "./types";
 
 // Sub-resources are read through tolerant helpers, so they are typed as unknown.
 type Raw = Envelope<unknown>;
@@ -22,7 +23,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     res = await fetch(`${getBackendUrl()}/api${path}`, {
       ...init,
-      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+      headers: {
+        "Content-Type": "application/json",
+        ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
+        ...(init?.headers ?? {}),
+      },
     });
   } catch {
     throw new ApiError("The backend is not reachable. Check the backend address in Settings.", 0);
@@ -35,6 +40,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       detail = body.error?.message ?? body.detail ?? body.message ?? detail;
     } catch {
       /* keep statusText */
+    }
+    // A rejected token (expired, signed out elsewhere, user disabled) sends everyone back to the login page.
+    if (res.status === 401 && getToken()) {
+      clearToken();
+      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
     }
     throw new ApiError(typeof detail === "string" ? detail : JSON.stringify(detail), res.status);
   }
@@ -54,7 +64,31 @@ function flatDevice(d: Device): Device {
   return out as unknown as Device;
 }
 
+const post = (body: unknown): RequestInit => ({ method: "POST", body: JSON.stringify(body) });
+
+export interface Session {
+  token: string;
+  expires_at: number;
+  user: AuthUser;
+}
+
 export const api = {
+  authStatus: () => request<Envelope<{ needs_setup: boolean }>>("/auth/status"),
+  login: (username: string, password: string, remember: boolean) =>
+    request<Envelope<Session>>("/auth/login", post({ username, password, remember })),
+  setupAdmin: (username: string, password: string, full_name: string, remember: boolean) =>
+    request<Envelope<Session>>("/auth/setup", post({ username, password, full_name, remember })),
+  me: () => request<Envelope<AuthUser>>("/auth/me"),
+  logout: () => request<Envelope<unknown>>("/auth/logout", post({})),
+  changePassword: (current_password: string, new_password: string) =>
+    request<Envelope<unknown>>("/auth/password", post({ current_password, new_password })),
+  users: () => request<Envelope<ManagedUser[]>>("/users"),
+  createUser: (b: { username: string; password: string; role: string; full_name: string }) =>
+    request<Envelope<ManagedUser[]>>("/users", post(b)),
+  updateUser: (id: number, b: Record<string, string | boolean>) =>
+    request<Envelope<ManagedUser[]>>(`/users/${id}`, { method: "PATCH", body: JSON.stringify(b) }),
+  deleteUser: (id: number) => request<Envelope<ManagedUser[]>>(`/users/${id}`, { method: "DELETE" }),
+
   health: () => request<Health>("/health"),
   devices: () => request<Envelope<Device[]>>("/devices?per_page=5000").then((r) => ({ ...r, data: (r.data ?? []).map(flatDevice) })),
   alerts: (query = "") => request<Envelope<Alert[]>>(`/alerts${query ? `${query}&` : "?"}per_page=1000`),

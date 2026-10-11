@@ -6,6 +6,7 @@ import App from "./App";
 import { ThemeProvider } from "./lib/theme";
 import { RefreshProvider } from "./lib/refresh";
 import { LangProvider } from "./lib/i18n";
+import { AuthProvider } from "./lib/auth";
 import "@fontsource-variable/public-sans";
 import "@fontsource-variable/vazirmatn";
 import "@fontsource-variable/jetbrains-mono";
@@ -18,11 +19,13 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={qc}>
       <LangProvider>
       <ThemeProvider>
+        <AuthProvider>
         <RefreshProvider>
           <BrowserRouter>
             <App />
           </BrowserRouter>
         </RefreshProvider>
+        </AuthProvider>
       </ThemeProvider>
       </LangProvider>
     </QueryClientProvider>

@@ -1,17 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import ErrorBoundary from "./ErrorBoundary";
+import { useAuth } from "../lib/auth";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useIsFetching, useQueryClient, useQuery } from "@tanstack/react-query";
 import {
   Activity, AlertTriangle, Cable, FileText, Gauge, Languages, LayoutDashboard, Map, Moon, RefreshCw,
-  Menu, Server, Settings, Sun, Wrench, X,
+  LogOut, Menu, Server, Settings, Sun, UserRound, Users, Wrench, X,
 } from "lucide-react";
 import { api } from "../api/client";
 import { useTheme } from "../lib/theme";
 import { useI18n } from "../lib/i18n";
 import { REFRESH_OPTIONS, useIntervalLabel, useRefresh, type Interval } from "../lib/refresh";
 
-const NAV = [
+const NAV: { to: string; label: string; icon: typeof Server; end?: boolean; admin?: boolean }[] = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/devices", label: "Devices", icon: Server },
   { to: "/ports", label: "Ports", icon: Cable },
@@ -21,7 +22,8 @@ const NAV = [
   { to: "/logs", label: "Logs", icon: FileText },
   { to: "/map", label: "Network map", icon: Map },
   { to: "/performance", label: "Performance", icon: Gauge },
-  { to: "/settings", label: "Settings", icon: Settings },
+  { to: "/users", label: "Users", icon: Users, admin: true },
+  { to: "/settings", label: "Settings", icon: Settings, admin: true },
 ];
 
 function StatusPill() {
@@ -53,11 +55,35 @@ function StatusPill() {
   );
 }
 
+function UserCard() {
+  const { t } = useI18n();
+  const { user, logout } = useAuth();
+  if (!user) return null;
+  return (
+    <div className="space-y-2 border-t border-line p-3">
+      <NavLink
+        to="/account"
+        className={({ isActive }) => `flex items-center gap-3 rounded-md px-3 py-2 text-[13px] ${isActive ? "bg-accent/10 text-accent" : "hover:bg-sunken"}`}
+      >
+        <UserRound size={16} aria-hidden className="shrink-0" />
+        <span className="min-w-0">
+          <span className="block truncate font-semibold" dir="auto">{user.full_name || user.username}</span>
+          <span className="block text-xs text-dim">{user.role === "admin" ? t("Admin") : t("Observer")}</span>
+        </span>
+      </NavLink>
+      <button onClick={logout} className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-[13px] text-dim hover:bg-sunken hover:text-ink">
+        <LogOut size={16} aria-hidden /> {t("Sign out")}
+      </button>
+    </div>
+  );
+}
+
 function NavList() {
   const { t } = useI18n();
+  const { isAdmin } = useAuth();
   return (
     <nav className="flex-1 space-y-0.5 overflow-y-auto p-3" aria-label={t("Main navigation")}>
-      {NAV.map(({ to, label, icon: Icon, end }) => (
+      {NAV.filter((n) => !n.admin || isAdmin).map(({ to, label, icon: Icon, end }) => (
         <NavLink
           key={to}
           to={to}
@@ -148,6 +174,7 @@ export default function Layout() {
           <span className="text-[15px] font-semibold tracking-tight">Padi NMS</span>
         </div>
         <NavList />
+        <UserCard />
       </aside>
 
       {menu && (
@@ -164,6 +191,7 @@ export default function Layout() {
               </button>
             </div>
             <NavList />
+            <UserCard />
             <div className="border-t border-line p-4 sm:hidden"><RefreshSelect /></div>
           </aside>
         </div>
