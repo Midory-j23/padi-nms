@@ -5,10 +5,12 @@ import time
 from typing import Literal, Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Query, Response
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import AliasChoices, BaseModel, Field
 
+from app.auth import current_user
 from app.config import settings
+from app.services import db
 from app.services import librenms as lnms
 from app.services.librenms import LibreNMSError
 
@@ -81,11 +83,11 @@ async def health():
         src = lnms.state["source"]
         return {"status": "ok", "source": src, "configured": bool(settings.librenms_url and settings.librenms_api_token),
                 "connected": src == "live", "using_mock": src == "mock", "version": ver, "message": None,
-                "latency_ms": round((time.perf_counter() - t) * 1000), "error": None}
+                "latency_ms": round((time.perf_counter() - t) * 1000), "error": None, "database": await db.check()}
     except LibreNMSError as e:
         return {"status": "error", "source": "live", "configured": bool(settings.librenms_url and settings.librenms_api_token),
                 "connected": False, "using_mock": False, "version": None, "message": e.message, "latency_ms": None,
-                "error": {"code": e.code, "message": e.message}}
+                "error": {"code": e.code, "message": e.message}, "database": await db.check()}
 
 
 @router.get("/settings")
@@ -192,30 +194,66 @@ ADD_DEVICE_FIELDS = {"hostname", "display", "snmpver", "community", "port", "tra
                      "hardware", "os", "port_association_mode", "poller_group"}
 
 
-@router.post("/devices")
-async def add_device(body: dict):
+def _find_device_id(node):
+    """LibreNMS returns the new device inside {"devices": [{"device_id": N, ...}]}; find it wherever it sits."""
+    if isinstance(node, dict):
+        if isinstance(node.get("device_id"), (int, str)):
+            return node["device_id"]
+        for v in node.values():
+            found = _find_device_id(v)
+            if found is not None:
+                return found
+    elif isinstance(node, list):
+        for v in node:
+            found = _find_device_id(v)
+            if found is not None:
+                return found
+    return None
+
+
+async def _add_device(body: dict, actor: Optional[str] = None):
     """Allow-listed subset of the body is forwarded to LibreNMS POST /devices.
-    `ping_fallback` is handled here: if SNMP add fails, retry as ping-only."""
+    `ping_fallback` is handled here: if SNMP add fails, retry as ping-only.
+    The new device is also recorded in MongoDB (if configured), and every attempt goes to the audit log."""
     payload = {k: v for k, v in body.items() if k in ADD_DEVICE_FIELDS and v not in (None, "")}
-    if not str(payload.get("hostname") or "").strip():
+    source = "scan" if body.get("_source") == "scan" else "manual"
+    host = str(payload.get("hostname") or "").strip()
+    if not host:
         raise LibreNMSError(422, "invalid", "A host name or IP address is required.")
+    used_fallback = False
     try:
-        r = await lnms.request("POST", "/devices", json=payload)
+        try:
+            r = await lnms.request("POST", "/devices", json=payload)
+        except LibreNMSError as e:
+            if not (body.get("ping_fallback") and not payload.get("snmp_disable") and e.code in ("bad_request", "upstream_error")):
+                raise
+            r = await lnms.request("POST", "/devices", json={"hostname": payload["hostname"], "snmp_disable": True,
+                                                             "force_add": payload.get("force_add", False),
+                                                             **({"display": payload["display"]} if "display" in payload else {})})
+            used_fallback = True
     except LibreNMSError as e:
-        if not (body.get("ping_fallback") and not payload.get("snmp_disable") and e.code in ("bad_request", "upstream_error")):
-            raise
-        r = await lnms.request("POST", "/devices", json={"hostname": payload["hostname"], "snmp_disable": True,
-                                                         "force_add": payload.get("force_add", False),
-                                                         **({"display": payload["display"]} if "display" in payload else {})})
+        await db.audit("device.add", False, target=host, message=e.message, details={"source": source}, actor=actor)
+        raise
     lnms.invalidate("/devices")
+    ctype = "ping" if (payload.get("snmp_disable") or used_fallback) else "snmp"
+    await db.record_device_added(hostname=host, display_name=payload.get("display"), type_=ctype,
+                                 snmp_version=payload.get("snmpver") if ctype == "snmp" else None,
+                                 location=payload.get("location"), device_id=_find_device_id(r), source=source, actor=actor)
+    await db.audit("device.add", True, target=host, actor=actor,
+                   details={"source": source, "type": ctype, "ping_fallback_used": used_fallback})
     return {"source": "live", "data": r}
+
+
+@router.post("/devices")
+async def add_device(body: dict, user: dict = Depends(current_user)):
+    return await _add_device(body, user["username"])
 
 
 EDIT_TEXT_LIMITS = {"display": 255, "notes": 2000, "purpose": 255, "type": 32, "location": 255, "community": 255}
 
 
 @router.patch("/devices/{device_id}")
-async def edit_device(device_id: str, body: dict):
+async def edit_device(device_id: str, body: dict, user: dict = Depends(current_user)):
     """Edit an allow-listed set of device fields through LibreNMS PATCH /devices/{id}."""
     fields: list[str] = []
     data: list = []
@@ -251,16 +289,34 @@ async def edit_device(device_id: str, body: dict):
             put(flag, 1 if body[flag] in (1, True, "1", "true") else 0)
     if not fields:
         raise LibreNMSError(422, "invalid", "There is nothing to change.")
-    r = await lnms.request("PATCH", f"/devices/{q(device_id)}", json={"field": fields, "data": data})
+    try:
+        r = await lnms.request("PATCH", f"/devices/{q(device_id)}", json={"field": fields, "data": data})
+    except LibreNMSError as e:
+        await db.audit("device.update", False, target=str(device_id), message=e.message, actor=user["username"])
+        raise
     lnms.invalidate("/devices")
+    mirror = {}
+    if "display" in body:
+        mirror["display_name"] = str(body["display"] or "").strip() or None
+    if "location" in body:
+        mirror["location"] = str(body["location"] or "").strip() or None
+    host = await db.mirror_device_edit(device_id, mirror)
+    await db.audit("device.update", True, target=host or str(device_id), actor=user["username"],
+                   details={"fields": sorted(f for f in fields if f not in ("community", "override_sysLocation"))})
     return {"source": "live", "data": r}
 
 
 @router.delete("/devices/{device_id}")
-async def remove_device(device_id: str):
-    r = await lnms.request("DELETE", f"/devices/{q(device_id)}")
+async def remove_device(device_id: str, user: dict = Depends(current_user)):
+    try:
+        r = await lnms.request("DELETE", f"/devices/{q(device_id)}")
+    except LibreNMSError as e:
+        await db.audit("device.remove", False, target=str(device_id), message=e.message, actor=user["username"])
+        raise
     lnms.invalidate("/devices")
     lnms.invalidate("/ports")
+    host = await db.record_device_removed(device_id)
+    await db.audit("device.remove", True, target=host or str(device_id), actor=user["username"])
     return {"source": "live", "data": r}
 
 
@@ -563,7 +619,7 @@ async def discovery_scan(body: dict):
 
 
 @router.post("/discovery/add")
-async def discovery_add(body: dict):
+async def discovery_add(body: dict, user: dict = Depends(current_user)):
     hosts = body.get("hosts") or []
     if not isinstance(hosts, list) or not hosts:
         raise LibreNMSError(422, "invalid", "Select at least one device to add.")
@@ -583,7 +639,7 @@ async def discovery_add(body: dict):
     sem = asyncio.Semaphore(3)  # LibreNMS add can take several seconds; do not flood it
 
     async def one(ip: str):
-        payload: dict = {"hostname": ip}
+        payload: dict = {"hostname": ip, "_source": "scan"}
         if ping_only:
             payload["snmp_disable"] = True
         else:
@@ -593,7 +649,7 @@ async def discovery_add(body: dict):
             payload["force_add"] = True
         async with sem:
             try:
-                await add_device(payload)
+                await _add_device(payload, user["username"])
                 return {"host": ip, "ok": True, "message": ""}
             except LibreNMSError as e:
                 return {"host": ip, "ok": False, "message": e.message}
@@ -714,3 +770,21 @@ async def cancel_port_scan(job_id: str):
         raise LibreNMSError(404, "not_found", "This scan no longer exists. Start a new one.")
     job["cancel"] = True
     return {"data": _job_view(job_id, job)}
+
+
+# ---------- audit log (MongoDB) ----------
+async def _require_db() -> None:
+    state = await db.check()
+    if state == "off":
+        raise LibreNMSError(503, "database_off", "The database is not set up.")
+    if state == "error":
+        raise LibreNMSError(503, "database_unavailable", "The database is not reachable.")
+
+
+@router.get("/audit")
+async def list_audit(limit: int = Query(200, ge=1, le=1000)):
+    """Admin only (see ADMIN_ONLY_PREFIXES in auth.py)."""
+    if await db.check() == "off":
+        return {"source": "database", "database": "off", "data": []}
+    await _require_db()
+    return {"source": "database", "database": "ok", "data": await db.list_audit(limit)}

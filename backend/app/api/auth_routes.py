@@ -1,10 +1,11 @@
 """Sign-in, sign-out, account and user management."""
 import time
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 
 from app import auth
 from app.auth import ONLINE_SECONDS, ROLES, current_user, db, require_admin
+from app.services import db as mongo
 from app.services.librenms import LibreNMSError
 
 router = APIRouter(prefix="/api/auth")
@@ -33,7 +34,7 @@ def status():
 
 
 @router.post("/setup")
-def setup(body: dict, request: Request):
+def setup(body: dict, request: Request, bg: BackgroundTasks):
     """Creates the first admin. Works only while there are no users at all."""
     username = auth.check_username(str(body.get("username", "")))
     password = str(body.get("password", ""))
@@ -47,11 +48,13 @@ def setup(body: dict, request: Request):
             (username, full_name, auth.hash_password(password), "admin", time.time()))
         token, exp = auth.create_session(con, cur.lastrowid, bool(body.get("remember")))
         row = con.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,)).fetchone()
+        bg.add_task(mongo.sync_user, auth.user_record(con, cur.lastrowid))
+        bg.add_task(mongo.audit, "user.create", True, username, "first administrator", None, username)
         return {"data": {"token": token, "expires_at": exp, "user": auth.public_user(row)}}
 
 
 @router.post("/login")
-def login(body: dict, request: Request):
+def login(body: dict, request: Request, bg: BackgroundTasks):
     username = str(body.get("username", "")).strip().lower()[:64]
     password = str(body.get("password", ""))[:256]
     ip = _ip(request)
@@ -64,6 +67,7 @@ def login(body: dict, request: Request):
             raise LibreNMSError(401, "bad_login", BAD_LOGIN)
         auth.throttle_ok(username)
         token, exp = auth.create_session(con, row["id"], bool(body.get("remember")))
+        bg.add_task(mongo.sync_user, auth.user_record(con, row["id"]))  # keeps last_login current
         return {"data": {"token": token, "expires_at": exp, "user": auth.public_user(row)}}
 
 
@@ -110,7 +114,7 @@ def list_users():
 
 
 @users_router.post("")
-def create_user(body: dict):
+def create_user(body: dict, bg: BackgroundTasks, admin: dict = Depends(require_admin)):
     username = auth.check_username(str(body.get("username", "")))
     password = str(body.get("password", ""))
     auth.check_new_password(password, username)
@@ -121,13 +125,15 @@ def create_user(body: dict):
     with auth._db_lock, db() as con:
         if con.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
             raise LibreNMSError(409, "exists", "That username is already taken.")
-        con.execute("INSERT INTO users (username, full_name, password_hash, role, active, created_at) VALUES (?,?,?,?,1,?)",
-                    (username, full_name, auth.hash_password(password), role, time.time()))
+        cur = con.execute("INSERT INTO users (username, full_name, password_hash, role, active, created_at) VALUES (?,?,?,?,1,?)",
+                          (username, full_name, auth.hash_password(password), role, time.time()))
+        bg.add_task(mongo.sync_user, auth.user_record(con, cur.lastrowid))
+        bg.add_task(mongo.audit, "user.create", True, username, None, {"role": role}, admin["username"])
         return {"data": _listing(con)}
 
 
 @users_router.patch("/{user_id}")
-def update_user(user_id: int, body: dict, admin: dict = Depends(require_admin)):
+def update_user(user_id: int, body: dict, bg: BackgroundTasks, admin: dict = Depends(require_admin)):
     with auth._db_lock, db() as con:
         row = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         if not row:
@@ -162,11 +168,14 @@ def update_user(user_id: int, body: dict, admin: dict = Depends(require_admin)):
         con.execute(f"UPDATE users SET {', '.join(sets)} WHERE id = ?", (*args, user_id))
         if revoke:
             auth.revoke_sessions(con, user_id)
+        bg.add_task(mongo.sync_user, auth.user_record(con, user_id))
+        changed = sorted(k for k in ("role", "active", "full_name", "password") if k in body and (k != "password" or body.get("password")))
+        bg.add_task(mongo.audit, "user.update", True, row["username"], None, {"fields": changed}, admin["username"])
         return {"data": _listing(con)}
 
 
 @users_router.delete("/{user_id}")
-def delete_user(user_id: int, admin: dict = Depends(require_admin)):
+def delete_user(user_id: int, bg: BackgroundTasks, admin: dict = Depends(require_admin)):
     with auth._db_lock, db() as con:
         row = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         if not row:
@@ -176,4 +185,6 @@ def delete_user(user_id: int, admin: dict = Depends(require_admin)):
         if row["role"] == "admin" and row["active"] and _active_admins(con) <= 1:
             raise LibreNMSError(409, "last_admin", "There must be at least one active admin.")
         con.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        bg.add_task(mongo.remove_user, row["username"])
+        bg.add_task(mongo.audit, "user.delete", True, row["username"], None, None, admin["username"])
         return {"data": _listing(con)}

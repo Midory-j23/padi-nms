@@ -20,9 +20,15 @@ const SETTINGS_METHOD = "PUT";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
+  // A backend that accepts the connection but never answers must not leave the app on "Loading" forever.
+  // Scans can legitimately take long, so they get no limit; reads get 20 s, changes 2 minutes.
+  const limitMs = path.startsWith("/discovery") ? 0 : (init?.method ?? "GET") === "GET" ? 20_000 : 120_000;
+  const ctrl = new AbortController();
+  const timer = limitMs ? setTimeout(() => ctrl.abort(), limitMs) : undefined;
   try {
     res = await fetch(`${getBackendUrl()}/api${path}`, {
       ...init,
+      signal: ctrl.signal,
       headers: {
         "Content-Type": "application/json",
         ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
@@ -30,7 +36,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       },
     });
   } catch {
-    throw new ApiError("The backend is not reachable. Check the backend address in Settings.", 0);
+    throw new ApiError(
+      ctrl.signal.aborted
+        ? "The backend did not answer in time. Check that it is running, then try again."
+        : "The backend is not reachable. Check the backend address in Settings.",
+      0,
+    );
+  } finally {
+    if (timer) clearTimeout(timer);
   }
   if (res.status === 204) return undefined as T;
   if (!res.ok) {

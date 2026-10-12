@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from fastapi import Depends, FastAPI, Request
@@ -7,8 +8,9 @@ from fastapi.responses import JSONResponse
 from app.api.auth_routes import router as auth_router, users_router
 from app.api.prometheus import metrics_router, router as prom_router
 from app.api.routes import router
-from app.auth import authorize
+from app.auth import all_user_records, authorize
 from app.config import settings
+from app.services import db
 from app.services.librenms import LibreNMSError
 
 log = logging.getLogger("librenms-ui")
@@ -21,6 +23,22 @@ app.include_router(users_router)
 app.include_router(router, dependencies=[Depends(authorize)])
 app.include_router(prom_router, dependencies=[Depends(authorize)])
 app.include_router(metrics_router)  # Prometheus scraping uses its own METRICS_TOKEN
+
+
+@app.on_event("startup")
+async def _startup():
+    # Indexes, one-time copy of the old `clients` collection, and a full copy of the users into MongoDB.
+    try:
+        users = await asyncio.to_thread(all_user_records)
+    except Exception:  # noqa: BLE001
+        log.exception("Could not read the users for the MongoDB copy")
+        users = []
+    await db.init(users)
+
+
+@app.on_event("shutdown")
+async def _shutdown():
+    await db.close()
 
 
 @app.exception_handler(LibreNMSError)

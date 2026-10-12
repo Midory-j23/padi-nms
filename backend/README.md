@@ -38,3 +38,12 @@ upstream_error, invalid_response, empty, not_configured`.
 
 Not exposed by LibreNMS as JSON (documented): historical traffic series, response time,
 packet loss. Planned: your metric store (Prometheus/InfluxDB).
+
+
+## MongoDB (optional): devices, users and audit log
+Set `MONGODB_URI` (and optionally `MONGODB_DB`, default `padi_nms`) in `.env` and restart the backend. Leave `MONGODB_URI` empty to run without it; monitoring, add and remove keep working.
+Collections are created automatically at start-up (no setup script needed):
+
+- `devices`: every device added through the app (single add, network scan): host name, display name, type, SNMP version, location, LibreNMS device id, source, who added it and when. Removing a device marks its record `removed` (kept for history). SNMP communities and passwords are never stored. Records from the older `clients` collection are copied here once.
+- `app_users`: a copy of the app's users (username, full name, role, active, created, last login). It is updated on every create / edit / delete / sign-in and fully re-synced at each backend start. Passwords and password hashes are never stored there; sign-in and sessions stay in the SQLite file.
+- `audit_log`: every device add / edit / remove and user create / update / delete, with who did it. Admin-only read: `GET /api/audit`.

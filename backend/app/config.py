@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     cache_ttl: int = 15
     verify_ssl: bool = True
     mock_fallback: bool = True
+    # MongoDB for the app's own data (clients, audit log). Empty = feature off; monitoring works without it.
+    mongodb_uri: str = ""
+    mongodb_db: str = "padi_nms"
     cors_origins: str = "http://localhost:5173"
     # Open-port check: by default only private / local addresses may be checked.
     allow_public_scan: bool = False

@@ -62,6 +62,7 @@ export default function AddDevice() {
       // Never keep credentials around after they were sent.
       setCommunity(""); setAuthpass(""); setCryptopass("");
       qc.invalidateQueries({ queryKey: ["devices"] });
+      qc.invalidateQueries({ queryKey: ["audit"] });
     },
   });
 

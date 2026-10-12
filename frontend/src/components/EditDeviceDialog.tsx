@@ -42,6 +42,7 @@ export default function EditDeviceDialog({ open, onClose, id, device }: { open: 
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["device", id] });
       qc.invalidateQueries({ queryKey: ["devices"] });
+      qc.invalidateQueries({ queryKey: ["audit"] });
       onClose();
     },
   });

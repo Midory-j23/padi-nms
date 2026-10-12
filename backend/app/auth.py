@@ -26,7 +26,7 @@ ROLES = ("admin", "observer")
 USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{3,32}$")
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 # Only admins may even read these (user list, LibreNMS connection, active scanning).
-ADMIN_ONLY_PREFIXES = ("/api/settings", "/api/users", "/api/discovery")
+ADMIN_ONLY_PREFIXES = ("/api/settings", "/api/users", "/api/discovery", "/api/audit")
 ONLINE_SECONDS = 5 * 60
 
 _db_lock = threading.Lock()
@@ -179,6 +179,19 @@ def revoke_sessions(con: sqlite3.Connection, user_id: int, keep_token: Optional[
 def public_user(row: sqlite3.Row) -> dict:
     return {"id": row["id"], "username": row["username"], "full_name": row["full_name"], "role": row["role"],
             "active": bool(row["active"])}
+
+
+def user_record(con: sqlite3.Connection, user_id: int) -> Optional[dict]:
+    """One user as a plain dict (no password hash), used to copy the user into MongoDB."""
+    r = con.execute("SELECT id, username, full_name, role, active, created_at, last_login FROM users WHERE id = ?",
+                    (user_id,)).fetchone()
+    return dict(r) if r else None
+
+
+def all_user_records() -> list[dict]:
+    with _db_lock, db() as con:
+        return [dict(r) for r in con.execute(
+            "SELECT id, username, full_name, role, active, created_at, last_login FROM users ORDER BY id")]
 
 
 def bearer(request: Request) -> Optional[str]:

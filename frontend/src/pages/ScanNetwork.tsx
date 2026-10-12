@@ -39,6 +39,7 @@ export default function ScanNetwork() {
     onSuccess: () => {
       setCommunity(""); // never keep credentials after they were sent
       qc.invalidateQueries({ queryKey: ["devices"] });
+      qc.invalidateQueries({ queryKey: ["audit"] });
     },
   });
 

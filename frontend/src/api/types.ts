@@ -13,6 +13,7 @@ export interface Health {
   configured: boolean;
   version?: string;
   message?: string;
+  database?: "off" | "ok" | "error";
 }
 
 export interface Device {
