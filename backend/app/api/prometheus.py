@@ -8,6 +8,7 @@ import hmac
 import math
 import re
 import time
+from datetime import timezone
 from typing import Optional
 from urllib.parse import quote
 
@@ -15,7 +16,7 @@ import httpx
 from fastapi import APIRouter, Header, Query, Response
 
 from app.config import settings
-from app.services import librenms as lnms
+from app.services import db, librenms as lnms
 from app.services.librenms import LibreNMSError
 
 router = APIRouter(prefix="/api")
@@ -54,7 +55,7 @@ class _Out:
         if name not in self._seen:
             self._seen.add(name)
             self.lines += [f"# HELP {name} {help_}", f"# TYPE {name} {typ}"]
-        self.lines.append(f"{name}{_labels(**labels)} {v:g}")
+        self.lines.append(f"{name}{_labels(**labels)} {v:.15g}")
 
     def text(self) -> str:
         return "\n".join(self.lines) + "\n"
@@ -115,6 +116,13 @@ async def metrics(authorization: Optional[str] = Header(None)):
             out.add("padi_port_out_octets_total", "Octets sent (counter).", "counter", p.get("ifOutOctets"), **lab)
             out.add("padi_port_in_errors_total", "Input errors (counter).", "counter", p.get("ifInErrors"), **lab)
             out.add("padi_port_out_errors_total", "Output errors (counter).", "counter", p.get("ifOutErrors"), **lab)
+    # Device logs copied into MongoDB (see services/collector.py). Prometheus holds numbers, so these are counts.
+    for r in await db.log_counts():
+        lab = dict(kind=r["kind"], hostname=r["hostname"], severity=r["severity"])
+        out.add("padi_device_logs_total", "Log entries stored in MongoDB (counter).", "counter", r["count"], **lab)
+        if r.get("last"):
+            out.add("padi_device_logs_last_stored_timestamp_seconds", "Unix time the newest entry was stored.", "gauge",
+                    r["last"].replace(tzinfo=r["last"].tzinfo or timezone.utc).timestamp(), **lab)
     return Response(out.text(), media_type="text/plain; version=0.0.4; charset=utf-8")
 
 

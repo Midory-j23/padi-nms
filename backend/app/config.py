@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     # MongoDB for the app's own data (clients, audit log). Empty = feature off; monitoring works without it.
     mongodb_uri: str = ""
     mongodb_db: str = "padi_nms"
+    # Copy LibreNMS logs (eventlog, syslog, alertlog) into MongoDB every N seconds. 0 = off. Needs MONGODB_URI.
+    log_collect_interval: int = 60
     cors_origins: str = "http://localhost:5173"
     # Open-port check: by default only private / local addresses may be checked.
     allow_public_scan: bool = False

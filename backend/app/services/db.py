@@ -28,6 +28,7 @@ _down_until = 0.0
 DEVICES = "devices"      # every device added through the app
 USERS = "app_users"      # read-only copy of the app's users (no passwords); sign-in itself stays in SQLite
 AUDIT = "audit_log"
+LOGS = "device_logs"     # LibreNMS eventlog / syslog / alertlog entries, copied by services/collector.py
 
 
 def enabled() -> bool:
@@ -211,7 +212,8 @@ async def init(users: list[dict]) -> None:
         _mark_up()
         # Indexes are a convenience: one that already exists under another name (e.g. from setup.js) must not stop start-up.
         for coll, keys, kw in ((DEVICES, [("hostname_lc", 1), ("status", 1)], {}), (DEVICES, "librenms_device_id", {}),
-                               (USERS, "username", {"unique": True}), (AUDIT, [("at", -1)], {})):
+                               (USERS, "username", {"unique": True}), (AUDIT, [("at", -1)], {}),
+                               (LOGS, [("kind", 1), ("log_id", 1)], {"unique": True}), (LOGS, [("hostname", 1), ("logged_at", -1)], {})):
             try:
                 await db[coll].create_index(keys, **kw)
             except Exception as e:  # noqa: BLE001
@@ -229,7 +231,7 @@ async def init(users: list[dict]) -> None:
         except Exception as e:  # noqa: BLE001
             _warn("copy from clients", e)
         await sync_users(users)
-        log.info("MongoDB: ready (database '%s').", settings.mongodb_db)
+        log.warning("MongoDB: ready (database '%s'). Users: %s.%s, devices: %s.%s", settings.mongodb_db, settings.mongodb_db, USERS, settings.mongodb_db, DEVICES)
     except Exception as e:  # noqa: BLE001
         _warn("start-up", e)
 
@@ -263,6 +265,7 @@ async def sync_users(users: list[dict]) -> None:
         for u in users:
             await _db()[USERS].replace_one({"username": u["username"]}, _user_doc(u), upsert=True)
         await _db()[USERS].delete_many({"username": {"$nin": [u["username"] for u in users]}})
+        log.warning("MongoDB: %d user(s) written to %s.%s", len(users), settings.mongodb_db, USERS)
     except Exception as e:  # noqa: BLE001
         _warn("users sync", e)
 
@@ -274,3 +277,55 @@ async def remove_user(username: str) -> None:
         await _db()[USERS].delete_one({"username": username})
     except Exception as e:  # noqa: BLE001
         _warn("user remove", e)
+
+
+# ---------- device logs (copied from LibreNMS) ----------
+_LOG_ID = {"eventlog": "event_id", "syslog": "seq", "alertlog": "id"}
+_LOG_TIME = {"eventlog": "datetime", "syslog": "timestamp", "alertlog": "time_logged"}
+
+
+async def store_logs(kind: str, logs: list[dict], hostnames: dict) -> int:
+    """Insert log entries that are not stored yet (matched on kind + LibreNMS log id). Returns how many were new."""
+    if not enabled() or _is_down() or not logs:
+        return 0
+    from pymongo import UpdateOne
+    ops = []
+    for e in logs:
+        if not isinstance(e, dict) or e.get(_LOG_ID[kind]) is None:
+            continue
+        did = _int_or_none(e.get("device_id"))
+        doc = {"kind": kind, "log_id": _int_or_none(e[_LOG_ID[kind]]), "device_id": did,
+               "hostname": e.get("hostname") or hostnames.get(did), "logged_at": e.get(_LOG_TIME[kind]),
+               "message": e.get("message") or e.get("msg"), "entry": e, "collected_at": _now()}
+        ops.append(UpdateOne({"kind": kind, "log_id": doc["log_id"]}, {"$setOnInsert": doc}, upsert=True))
+    if not ops:
+        return 0
+    try:
+        res = await _db()[LOGS].bulk_write(ops, ordered=False)
+        return res.upserted_count
+    except Exception as ex:  # noqa: BLE001
+        _warn("log write", ex)
+        return 0
+
+
+_counts_cache: tuple = (0.0, [])
+
+
+async def log_counts(max_age: float = 30.0) -> list[dict]:
+    """Stored log entries grouped by kind / host / severity, for the Prometheus /metrics page (cached briefly)."""
+    global _counts_cache
+    if not enabled() or _is_down():
+        return []
+    if time.monotonic() - _counts_cache[0] < max_age:
+        return _counts_cache[1]
+    try:
+        cur = await _db()[LOGS].aggregate([{"$group": {
+            "_id": {"kind": "$kind", "hostname": {"$ifNull": ["$hostname", "unknown"]},
+                    "severity": {"$toString": {"$ifNull": ["$entry.priority", {"$ifNull": ["$entry.severity", "none"]}]}}},
+            "count": {"$sum": 1}, "last": {"$max": "$collected_at"}}}])
+        rows = [{**d["_id"], "count": d["count"], "last": d["last"]} for d in await cur.to_list(length=5000)]
+        _counts_cache = (time.monotonic(), rows)
+        return rows
+    except Exception as e:  # noqa: BLE001
+        _warn("log counts", e)
+        return _counts_cache[1]

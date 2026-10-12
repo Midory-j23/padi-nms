@@ -10,7 +10,7 @@ from app.api.prometheus import metrics_router, router as prom_router
 from app.api.routes import router
 from app.auth import all_user_records, authorize
 from app.config import settings
-from app.services import db
+from app.services import collector, db
 from app.services.librenms import LibreNMSError
 
 log = logging.getLogger("librenms-ui")
@@ -34,10 +34,14 @@ async def _startup():
         log.exception("Could not read the users for the MongoDB copy")
         users = []
     await db.init(users)
+    app.state.collector = asyncio.create_task(collector.run())
 
 
 @app.on_event("shutdown")
 async def _shutdown():
+    task = getattr(app.state, "collector", None)
+    if task:
+        task.cancel()
     await db.close()
 
 
