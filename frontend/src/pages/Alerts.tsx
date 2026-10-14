@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check } from "lucide-react";
+import { Check, Plus } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { api } from "../api/client";
 import type { Alert } from "../api/types";
@@ -9,6 +9,8 @@ import { useRefresh } from "../lib/refresh";
 import { useFormat } from "../lib/format";
 import { isolate, useI18n } from "../lib/i18n";
 import { Empty, ErrorNote } from "../components/ui";
+import EmptyGuide from "../components/EmptyGuide";
+import RuleDialog from "../components/RuleDialog";
 import Pager from "../components/Pager";
 
 const PAGE_SIZE = 25;
@@ -103,6 +105,7 @@ export default function Alerts() {
   const [page, setPage] = useState(0);
   const [target, setTarget] = useState<Alert | null>(null);
   const { isAdmin } = useAuth();
+  const [adding, setAdding] = useState(false);
 
   const query = [STATE_QUERY[state], severity !== "all" ? `severity=${severity}` : ""].filter(Boolean).join("&");
   const q = useQuery({ queryKey: ["alerts", query], queryFn: () => api.alerts(query ? `?${query}` : ""), refetchInterval: ms });
@@ -129,7 +132,13 @@ export default function Alerts() {
           <h1 className="text-xl font-semibold tracking-tight">{t("Alerts")}</h1>
           <p className="mt-1 text-sm text-dim">{q.isLoading ? t("Loading alerts") : t(state === "active" ? "{n} active" : state === "acknowledged" ? "{n} acknowledged" : "{n} alerts", { n: f.num(rows.length) })}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {isAdmin && (
+            <button onClick={() => setAdding(true)} className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-2 text-sm font-semibold text-bg">
+              <Plus size={14} aria-hidden /> {t("Add rule")}
+            </button>
+          )}
+          <Link to="/rules" className="rounded-md border border-line px-3 py-2 text-sm hover:bg-sunken">{t("Manage rules")}</Link>
           <div className="flex overflow-hidden rounded-md border border-line text-sm" role="group" aria-label={t("Alert state")}>
             {(["active", "acknowledged", "all"] as StateFilter[]).map((s) => (
               <button key={s} onClick={() => { setState(s); setPage(0); }} aria-pressed={state === s} className={`px-3 py-2 ${state === s ? "bg-accent/10 font-semibold text-accent" : "bg-panel hover:bg-sunken"}`}>
@@ -186,12 +195,31 @@ export default function Alerts() {
           </tbody>
         </table>
         {!q.isLoading && visible.length === 0 && (
-          <Empty>{state === "active" && severity === "all" ? t("No active alerts. Everything is running within its rules.") : t("No alerts match these filters.")}</Empty>
+          state === "active" && severity === "all" && q.data?.rules === 0 ? (
+            <EmptyGuide
+              title={t("No alert rules exist in LibreNMS yet")}
+              intro={t("LibreNMS raises an alert only when a device matches an alert rule, so with no rules this page stays empty.")}
+              steps={isAdmin ? [
+                t("Open Alert rules in this app and add one from a template, for example Device down."),
+                t("New alerts appear here after the next poll, usually within 5 minutes."),
+              ] : [t("Ask an administrator to add alert rules.")]}
+              action={isAdmin ? <Link to="/rules" className="inline-block rounded-md bg-accent px-4 py-2 font-semibold text-bg">{t("Open Alert rules")}</Link> : undefined}
+            />
+          ) : (
+            <Empty>
+              {state === "active" && severity === "all"
+                ? q.data?.rules
+                  ? t("No active alerts. Alert rules defined: {n}.", { n: f.num(q.data.rules) })
+                  : t("No active alerts. Everything is running within its rules.")
+                : t("No alerts match these filters.")}
+            </Empty>
+          )
         )}
       </div>
 
       <Pager page={current} pages={pages} total={rows.length} size={PAGE_SIZE} onPage={setPage} />
       <AckDialog alert={target} onClose={() => setTarget(null)} />
+      {isAdmin && <RuleDialog open={adding} onClose={() => setAdding(false)} rule={null} template={null} />}
     </div>
   );
 }

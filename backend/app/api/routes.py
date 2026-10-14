@@ -1,6 +1,8 @@
 """Backend endpoints. Every LibreNMS route used here was verified against docs.librenms.org/API.
 Comments tagged UNVERIFIED mark field names or parameters not confirmed by the docs."""
 import asyncio
+import json
+import re
 import time
 from typing import Literal, Optional
 from urllib.parse import quote
@@ -414,8 +416,35 @@ async def get_port(port_id: int):
 
 
 # ---------- alerts ----------
+async def _soft(coro):
+    """LibreNMS answers 404 / an empty body when there is simply nothing yet (no alerts, no services).
+    That is an empty list, not an error."""
+    try:
+        return await coro
+    except LibreNMSError as e:
+        if e.code in ("not_found", "empty"):
+            return {}
+        raise
+
+
+async def _optional(coro):
+    """Extra information (rule names): the page still works without it."""
+    try:
+        return await coro
+    except LibreNMSError:
+        return {}
+
+
+async def rule_count() -> Optional[int]:
+    """How many alert rules LibreNMS has (None if it cannot be read). Zero rules means no alert will ever appear."""
+    try:
+        return len((await lnms.get("/rules", ttl=60)).get("rules", []))
+    except LibreNMSError as e:
+        return 0 if e.code in ("not_found", "empty") else None
+
+
 async def enriched_alerts(params: dict):
-    raw, rules, names = await asyncio.gather(lnms.get("/alerts", params), lnms.get("/rules", ttl=60), device_names())
+    raw, rules, names = await asyncio.gather(_soft(lnms.get("/alerts", params)), _optional(lnms.get("/rules", ttl=60)), device_names())
     rmap = {str(r.get("id")): r for r in rules.get("rules", [])}
     out = []
     for a in raw.get("alerts", []):
@@ -431,7 +460,7 @@ async def list_alerts(state: Optional[int] = Query(None, ge=0, le=2), severity: 
     """state: 0=ok, 1=alert, 2=acknowledged (documented)."""
     params = {k: v for k, v in {"state": state, "severity": severity}.items() if v is not None}
     rows, total = paginate(await enriched_alerts(params), page, per_page)
-    return ok(rows, total=total, page=page, per_page=per_page)
+    return ok(rows, total=total, page=page, per_page=per_page, rules=await rule_count())
 
 
 @router.get("/alerts/summary")
@@ -479,12 +508,229 @@ async def events(kind: Literal["eventlog", "syslog", "alertlog"] = "eventlog", d
 async def services(state: Optional[int] = Query(None, ge=0, le=2), type_: Optional[str] = Query(None, alias="type"),
                    device: Optional[str] = None):
     params = {k: v for k, v in {"state": state, "type": type_}.items() if v is not None}
-    raw, names = await asyncio.gather(lnms.get("/services" + (f"/{q(device)}" if device else ""), params),
+    raw, names = await asyncio.gather(_soft(lnms.get("/services" + (f"/{q(device)}" if device else ""), params)),
                                       device_names())
     rows = list(flatten(raw.get("services", [])))  # LibreNMS returns a list of single-item lists
     for s in rows:
         s["hostname"] = names.get(str(s.get("device_id")))
     return ok(rows)
+
+
+# ---------- alert rules (add / edit / delete) ----------
+RULE_OPERATORS = {"equal", "not_equal", "in", "not_in", "less", "less_or_equal", "greater", "greater_or_equal", "between",
+                  "not_between", "begins_with", "not_begins_with", "contains", "not_contains", "ends_with", "not_ends_with",
+                  "is_empty", "is_not_empty", "is_null", "is_not_null", "regex", "not_regex"}
+NO_VALUE_OPERATORS = {"is_empty", "is_not_empty", "is_null", "is_not_null"}
+RULE_FIELD_RE = re.compile(r"^[A-Za-z0-9_]{1,40}\.[A-Za-z0-9_]{1,60}$")   # table.column or macros.name
+MAX_RULE_CONDITIONS = 25
+
+
+def _json_obj(v):
+    """LibreNMS stores some rule parts as JSON text; accept both text and an already decoded value."""
+    if isinstance(v, (dict, list)):
+        return v
+    if isinstance(v, str) and v.strip():
+        try:
+            return json.loads(v)
+        except ValueError:
+            return None
+    return None
+
+
+def _int(v, default=0) -> int:
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return default
+
+
+def _rule_view(r: dict) -> dict:
+    extra = _json_obj(r.get("extra")) or {}
+    extra = extra if isinstance(extra, dict) else {}
+    builder = _json_obj(r.get("builder"))
+    devices = r.get("devices")
+    return {
+        "id": r.get("id"), "name": r.get("name") or "", "severity": str(r.get("severity") or "warning").lower(),
+        "disabled": bool(_int(r.get("disabled"))), "builder": builder if isinstance(builder, dict) else None,
+        "mute": bool(extra.get("mute")), "count": _int(extra.get("count"), -1), "delay": _int(extra.get("delay")),
+        "interval": _int(extra.get("interval")), "invert": bool(extra.get("invert")), "notes": r.get("notes") or "",
+        # LibreNMS does not report which devices a rule applies to, so this is normally None.
+        "devices": [_int(d) for d in devices] if isinstance(devices, list) else None,
+    }
+
+
+def _clean_builder(b, depth: int = 0) -> dict:
+    """Validate a rule's conditions and rebuild them in the exact shape LibreNMS expects."""
+    bad = LibreNMSError(422, "invalid_rule", "The rule conditions are not valid.")
+    if not isinstance(b, dict) or b.get("condition") not in ("AND", "OR") or not isinstance(b.get("rules"), list):
+        raise bad
+    if not b["rules"] or len(b["rules"]) > MAX_RULE_CONDITIONS:
+        raise bad
+    out = []
+    for r in b["rules"]:
+        if not isinstance(r, dict):
+            raise bad
+        if "rules" in r:  # a group of conditions, kept when an existing rule already has one
+            if depth >= 2:
+                raise bad
+            out.append(_clean_builder(r, depth + 1))
+            continue
+        field = str(r.get("field") or r.get("id") or "")
+        op = r.get("operator")
+        if not RULE_FIELD_RE.fullmatch(field) or op not in RULE_OPERATORS:
+            raise bad
+        value = "" if op in NO_VALUE_OPERATORS else str(r.get("value", "")).strip()
+        if op not in NO_VALUE_OPERATORS and (value == "" or len(value) > 255):
+            raise LibreNMSError(422, "invalid_rule", "Every condition needs a value.")
+        rtype = r.get("type") if r.get("type") in ("integer", "string") else "string"
+        out.append({"id": field, "field": field, "type": rtype, "input": "radio" if field.startswith("macros.") else "text",
+                    "operator": op, "value": value})
+    return {"condition": b["condition"], "rules": out, **({"valid": True} if depth == 0 else {})}
+
+
+class RuleIn(BaseModel):
+    name: str
+    severity: Literal["ok", "warning", "critical"] = "warning"
+    builder: dict
+    scope: Literal["all", "devices"] = "all"
+    devices: list[int] = []
+    disabled: bool = False
+    mute: bool = False
+    count: int = Field(-1, ge=-1, le=100000)           # -1 = no limit
+    delay: int = Field(300, ge=0, le=604800)           # seconds before the first alert
+    interval: int = Field(300, ge=0, le=604800)        # seconds between repeat notifications (0 = once)
+    notes: str = ""
+
+
+def _rule_payload(b: RuleIn) -> dict:
+    name = b.name.strip()
+    if not name or len(name) > 255:
+        raise LibreNMSError(422, "invalid_rule", "A rule needs a name (up to 255 characters).")
+    if b.scope == "devices" and not b.devices:
+        raise LibreNMSError(422, "invalid_rule", "Choose at least one device, or apply the rule to all devices.")
+    return {"name": name, "severity": b.severity, "builder": _clean_builder(b.builder), "disabled": 1 if b.disabled else 0,
+            "count": b.count, "delay": str(b.delay), "interval": str(b.interval), "mute": b.mute,
+            "notes": b.notes.strip()[:1000], "devices": [-1] if b.scope == "all" else sorted(set(b.devices))[:1000]}
+
+
+@router.get("/rules")
+async def list_rules():
+    raw = await _soft(lnms.get("/rules", ttl=0))
+    return ok([_rule_view(r) for r in raw.get("rules", []) if isinstance(r, dict)])
+
+
+@router.post("/rules")
+async def add_rule(body: RuleIn, user: dict = Depends(current_user)):
+    payload = _rule_payload(body)
+    try:
+        r = await lnms.request("POST", "/rules", json=payload)
+    except LibreNMSError as e:
+        await db.audit("rule.add", False, target=payload["name"], message=e.message, actor=user["username"])
+        raise
+    lnms.invalidate("/rules"); lnms.invalidate("/alerts")
+    await db.audit("rule.add", True, target=payload["name"], actor=user["username"], details={"severity": body.severity})
+    return {"source": "live", "data": r}
+
+
+@router.put("/rules/{rule_id}")
+async def edit_rule(rule_id: int, body: RuleIn, user: dict = Depends(current_user)):
+    payload = {**_rule_payload(body), "rule_id": rule_id}
+    try:
+        r = await lnms.request("PUT", "/rules", json=payload)
+    except LibreNMSError as e:
+        await db.audit("rule.update", False, target=f"{payload['name']} (#{rule_id})", message=e.message, actor=user["username"])
+        raise
+    lnms.invalidate("/rules"); lnms.invalidate("/alerts")
+    await db.audit("rule.update", True, target=f"{payload['name']} (#{rule_id})", actor=user["username"])
+    return {"source": "live", "data": r}
+
+
+@router.delete("/rules/{rule_id}")
+async def delete_rule(rule_id: int, user: dict = Depends(current_user)):
+    try:
+        r = await lnms.request("DELETE", f"/rules/{rule_id}")
+    except LibreNMSError as e:
+        await db.audit("rule.remove", False, target=f"#{rule_id}", message=e.message, actor=user["username"])
+        raise
+    lnms.invalidate("/rules"); lnms.invalidate("/alerts")
+    await db.audit("rule.remove", True, target=f"#{rule_id}", actor=user["username"])
+    return {"source": "live", "data": r}
+
+
+# ---------- service checks (add / edit / delete) ----------
+SERVICE_TYPE_RE = re.compile(r"^[A-Za-z0-9_.-]{1,40}$")
+SERVICE_HOST_RE = re.compile(r"^[A-Za-z0-9._:-]{0,255}$")
+# The parameters end up on a plugin's command line, so only plain characters are accepted (no quotes, pipes, ; & $ ` < > etc.).
+SERVICE_PARAM_RE = re.compile(r"^[A-Za-z0-9 _.:/=,%@+-]{0,255}$")
+
+
+class ServiceIn(BaseModel):
+    device: Optional[str] = None    # device id or host name; needed when adding
+    type: str
+    name: str = ""
+    ip: str = ""
+    desc: str = ""
+    param: str = ""
+    ignore: bool = False
+    disabled: bool = False
+
+
+def _service_fields(b: ServiceIn) -> dict:
+    stype = b.type.strip()
+    if not SERVICE_TYPE_RE.fullmatch(stype):
+        raise LibreNMSError(422, "invalid_service", "The check type must be a single word such as http, ssh or tcp.")
+    if not SERVICE_HOST_RE.fullmatch(b.ip.strip()):
+        raise LibreNMSError(422, "invalid_service", "The address contains characters that are not allowed.")
+    if not SERVICE_PARAM_RE.fullmatch(b.param.strip()):
+        raise LibreNMSError(422, "invalid_service", "The parameters may only contain letters, numbers, spaces and - _ . : / = , % @ +")
+    desc, name = b.desc.strip(), b.name.strip()
+    if len(desc) > 255 or len(name) > 255 or any(ord(c) < 32 for c in desc + name):
+        raise LibreNMSError(422, "invalid_service", "The description or name is not valid.")
+    return {"type": stype, "ip": b.ip.strip(), "desc": desc, "name": name, "param": b.param.strip(),
+            "ignore": 1 if b.ignore else 0, "disabled": 1 if b.disabled else 0}
+
+
+@router.post("/services")
+async def add_service(body: ServiceIn, user: dict = Depends(current_user)):
+    if not (body.device or "").strip():
+        raise LibreNMSError(422, "invalid_service", "Choose the device the check runs on.")
+    f = _service_fields(body)
+    payload = {k: v for k, v in f.items() if v not in ("", None)} | {"ignore": f["ignore"], "disabled": f["disabled"]}
+    try:
+        r = await lnms.request("POST", f"/services/{q(body.device.strip())}", json=payload)
+    except LibreNMSError as e:
+        await db.audit("service.add", False, target=f"{f['type']} on {body.device}", message=e.message, actor=user["username"])
+        raise
+    lnms.invalidate("/services")
+    await db.audit("service.add", True, target=f"{f['type']} on {body.device}", actor=user["username"])
+    return {"source": "live", "data": r}
+
+
+@router.patch("/services/{service_id}")
+async def edit_service(service_id: int, body: ServiceIn, user: dict = Depends(current_user)):
+    f = _service_fields(body)
+    payload = {"service_type": f["type"], "service_ip": f["ip"], "service_desc": f["desc"], "service_name": f["name"],
+               "service_param": f["param"], "service_ignore": f["ignore"], "service_disabled": f["disabled"]}
+    try:
+        r = await lnms.request("PATCH", f"/services/{service_id}", json=payload)
+    except LibreNMSError as e:
+        await db.audit("service.update", False, target=f"#{service_id}", message=e.message, actor=user["username"])
+        raise
+    lnms.invalidate("/services")
+    await db.audit("service.update", True, target=f"{f['type']} (#{service_id})", actor=user["username"])
+    return {"source": "live", "data": r}
+
+
+@router.delete("/services/{service_id}")
+async def delete_service(service_id: int, user: dict = Depends(current_user)):
+    try:
+        r = await lnms.request("DELETE", f"/services/{service_id}")
+    except LibreNMSError as e:
+        await db.audit("service.remove", False, target=f"#{service_id}", message=e.message, actor=user["username"])
+        raise
+    lnms.invalidate("/services")
+    await db.audit("service.remove", True, target=f"#{service_id}", actor=user["username"])
+    return {"source": "live", "data": r}
 
 
 # ---------- topology ----------

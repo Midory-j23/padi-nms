@@ -1,0 +1,25 @@
+# Secrets: never commit these (.env holds your LibreNMS API token)
+.env
+.env.*
+!.env.example
+
+# Local data (user accounts)
+backend/data/
+*.db
+
+# Python / backend
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node / frontend
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

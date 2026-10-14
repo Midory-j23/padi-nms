@@ -1,7 +1,7 @@
 import { getBackendUrl } from "../lib/backend";
 import { clearToken, getToken, UNAUTHORIZED_EVENT } from "../lib/session";
 import type { PromDevice, PromSeries, PromStatus } from "./prometheus";
-import type { Alert, AuthUser, Device, Envelope, Health, ManagedUser } from "./types";
+import type { Alert, AlertRule, AuthUser, Device, Envelope, Health, ManagedUser, RuleInput, ServiceInput } from "./types";
 
 // Sub-resources are read through tolerant helpers, so they are typed as unknown.
 type Raw = Envelope<unknown>;
@@ -114,6 +114,13 @@ export const api = {
   saveSettings: (body: { url?: string; token?: string; prometheus_url?: string }) =>
     request<unknown>("/settings", { method: SETTINGS_METHOD, body: JSON.stringify(body) }),
   services: () => request<Raw>("/services"),
+  rules: () => request<Envelope<AlertRule[]>>("/rules"),
+  addRule: (b: RuleInput) => request<Raw>("/rules", { method: "POST", body: JSON.stringify(b) }),
+  updateRule: (id: number, b: RuleInput) => request<Raw>(`/rules/${id}`, { method: "PUT", body: JSON.stringify(b) }),
+  deleteRule: (id: number) => request<Raw>(`/rules/${id}`, { method: "DELETE" }),
+  addService: (b: ServiceInput) => request<Raw>("/services", { method: "POST", body: JSON.stringify(b) }),
+  updateService: (id: number, b: ServiceInput) => request<Raw>(`/services/${id}`, { method: "PATCH", body: JSON.stringify(b) }),
+  deleteService: (id: number) => request<Raw>(`/services/${id}`, { method: "DELETE" }),
   prometheusStatus: () => request<PromStatus>("/prometheus/status"),
   prometheusRange: (query: string, range: number) =>
     request<Envelope<{ series: PromSeries[] }>>(`/prometheus/query_range?${new URLSearchParams({ query, range: String(range) })}`),

@@ -5,7 +5,7 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useIsFetching, useQueryClient, useQuery } from "@tanstack/react-query";
 import {
   Activity, AlertTriangle, Cable, FileText, Gauge, Languages, LayoutDashboard, Map, Moon, RefreshCw,
-  LogOut, Menu, Server, Settings, Sun, UserRound, Users, Wrench, X,
+  ListChecks, LogOut, Menu, Server, Settings, Sun, UserRound, Users, Wrench, X,
 } from "lucide-react";
 import { api } from "../api/client";
 import { useTheme } from "../lib/theme";
@@ -17,6 +17,7 @@ const NAV: { to: string; label: string; icon: typeof Server; end?: boolean; admi
   { to: "/devices", label: "Devices", icon: Server },
   { to: "/ports", label: "Ports", icon: Cable },
   { to: "/alerts", label: "Alerts", icon: AlertTriangle },
+  { to: "/rules", label: "Alert rules", icon: ListChecks },
   { to: "/availability", label: "Availability", icon: Activity },
   { to: "/services", label: "Services", icon: Wrench },
   { to: "/logs", label: "Logs", icon: FileText },

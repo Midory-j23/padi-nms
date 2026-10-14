@@ -10,6 +10,8 @@ A modern, bilingual (English / Persian) web dashboard for [LibreNMS](https://www
 - **Add device** by SNMP (v1, v2c, v3) or ping only
 - **Scan network**: enter a range such as `172.16.32.0/24`, see every address that answers, and add them all at once
 - **Remove device** with confirmation
+- **Alert rules**: add, edit, enable / disable and delete LibreNMS alert rules from the app, starting from templates (device down, high CPU, high memory, disk almost full, port down, device rebooted)
+- **Service checks**: add, edit and delete LibreNMS service checks (ping, HTTP, SSH, TCP port, ...) from the Services page
 - **Ports, Alerts, Availability, Services, Logs, Network map and Performance** pages
 - **Persian (RTL) and English**, switchable at any time, with Persian digits and Jalali dates in Persian
 - **Light and dark theme**
@@ -107,6 +109,20 @@ Settings saved from the app's Settings page are kept in the backend's memory onl
 
 Devices that block ping will not appear. Add those with **Add device**.
 
+## Alert rules and service checks
+
+**Alert rules** (menu: *Alert rules*). LibreNMS only raises an alert when a device matches a rule, and a new LibreNMS has none. Admins can click *Use this template* (for example *Device down*) or *Add rule* and build their own: choose the conditions (CPU usage, memory, disk, port state, device status, or any `table.column` LibreNMS knows), whether *all* or *any* must match, the severity, the delay before alerting, how often to repeat, and which devices it applies to. Rules can be edited, disabled (kept but silent) or deleted. Observers can see the rules but not change them.
+
+Notes:
+
+- LibreNMS does not tell the app which devices an existing rule applies to. When you edit a rule, the *Applies to* choice you make replaces its current scope (the dialog says so).
+- Rules created in an older LibreNMS format, or with nested condition groups, can still be deleted here; groups can be edited only in LibreNMS (other settings can be changed here).
+- Rules are sent to LibreNMS in the format its API documents. If your LibreNMS version rejects one, its message is shown in the dialog.
+
+**Service checks** (menu: *Services*). Admins can add a check to a device (type such as `icmp`, `http`, `ssh`, `tcp`, parameters such as `-p 3389`), edit it, or delete it. If a new check never gets a status, the Services feature may be switched off in LibreNMS: see <https://docs.librenms.org/Extensions/Services/>. Parameters accept only plain characters (letters, numbers, spaces and `- _ . : / = , % @ +`) because LibreNMS passes them to a plugin command line.
+
+Every add, edit and delete is also recorded in the activity log (`audit_log`) when MongoDB is configured.
+
 ## Using it on a phone
 
 Open `http://YOUR-PC-IP:5173` on a phone on the same network. For this to work:
@@ -145,6 +161,8 @@ padi-nms/
 | POST | `/api/devices` | Add a device |
 | DELETE | `/api/devices/{id}` | Remove a device |
 | GET | `/api/ports`, `/api/alerts`, `/api/services`, `/api/events` | Lists |
+| GET / POST / PUT / DELETE | `/api/rules` (`/api/rules/{id}`) | List, add, edit and delete alert rules (admin to change) |
+| POST / PATCH / DELETE | `/api/services` (`/api/services/{id}`) | Add, edit and delete service checks (admin) |
 | POST | `/api/discovery/scan` | Ping-scan an IP range |
 | POST | `/api/discovery/add` | Add several devices at once |
 

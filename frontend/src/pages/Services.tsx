@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { Search } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { api } from "../api/client";
 import type { Service } from "../api/types";
 import { useRefresh } from "../lib/refresh";
@@ -9,6 +9,10 @@ import { listFrom, num } from "../lib/extract";
 import { useFormat } from "../lib/format";
 import { useI18n } from "../lib/i18n";
 import { Empty, ErrorNote } from "../components/ui";
+import ConfirmDialog from "../components/ConfirmDialog";
+import EmptyGuide from "../components/EmptyGuide";
+import ServiceDialog from "../components/ServiceDialog";
+import { useAuth } from "../lib/auth";
 import Pager from "../components/Pager";
 
 const PAGE_SIZE = 25;
@@ -30,6 +34,11 @@ export default function Services() {
   const [search, setSearch] = useState("");
   const [level, setLevel] = useState("all");
   const [page, setPage] = useState(0);
+  const { isAdmin } = useAuth();
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState<{ service: Service | null } | null>(null);
+  const [deleting, setDeleting] = useState<Service | null>(null);
+  const remove = useMutation({ mutationFn: (id: number) => api.deleteService(id), onSuccess: () => qc.invalidateQueries({ queryKey: ["services"] }) });
 
   const names = useMemo(() => {
     const m = new Map<number, string>();
@@ -65,7 +74,12 @@ export default function Services() {
           <h1 className="text-xl font-semibold tracking-tight">{t("Services")}</h1>
           <p className="mt-1 text-sm text-dim">{q.isLoading ? t("Loading services") : t("{n} services, {bad} not ok", { n: f.num(all.length), bad: f.num(bad) })}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {isAdmin && (
+            <button onClick={() => setEditing({ service: null })} className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-2 text-sm font-semibold text-bg">
+              <Plus size={14} aria-hidden /> {t("Add service")}
+            </button>
+          )}
           <div className="relative w-full sm:w-auto">
             <Search size={14} className="pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-dim" aria-hidden />
             <input type="search" value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); }} placeholder={t("Search service, device, message")} aria-label={t("Search services")} className="w-full rounded-md border border-line bg-panel py-2 ps-9 sm:w-72 pe-3 text-sm placeholder:text-dim" />
@@ -89,6 +103,7 @@ export default function Services() {
               {["Status", "Service", "Device", "Message", "Changed"].map((h) => (
                 <th key={h} scope="col" className="px-4 py-2.5 text-start font-medium">{t(h)}</th>
               ))}
+              {isAdmin && <th scope="col" className="px-4 py-2.5"><span className="sr-only">{t("Actions")}</span></th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
@@ -111,16 +126,43 @@ export default function Services() {
                   </td>
                   <td className="max-w-xs truncate px-4 py-2.5 text-dim" dir="auto" title={s.service_message}>{s.service_message || "—"}</td>
                   <td className="px-4 py-2.5 tabular-nums">{f.epoch(s.service_changed)}</td>
+                  {isAdmin && (
+                    <td className="px-4 py-2.5">
+                      <div className="flex justify-end gap-2">
+                        <button onClick={() => setEditing({ service: s })} className="inline-flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-xs hover:bg-sunken"><Pencil size={12} aria-hidden /> {t("Edit")}</button>
+                        {s.service_id !== undefined && <button onClick={() => setDeleting(s)} className="inline-flex items-center gap-1.5 rounded-md border border-down/50 px-2.5 py-1 text-xs text-down hover:bg-down/10"><Trash2 size={12} aria-hidden /> {t("Delete")}</button>}
+                      </div>
+                    </td>
+                  )}
                 </tr>
               );
             })}
           </tbody>
         </table>
         {!q.isLoading && visible.length === 0 && (
-          <Empty>{all.length === 0 ? t("No services are configured in LibreNMS.") : t("No services match these filters.")}</Empty>
+          all.length === 0 ? (
+            <EmptyGuide
+              title={t("No service checks are set up in LibreNMS yet")}
+              intro={t("Services are extra checks LibreNMS runs against a device, for example ping, HTTP, SSH or a TCP port. LibreNMS has none by default.")}
+              steps={isAdmin ? [
+                t("Click Add service above, pick the device and a check type such as http, ssh or tcp, then save."),
+                t("If a new check never gets a status, the Services feature may be switched off in LibreNMS. Enable it as described in the LibreNMS Services documentation."),
+              ] : [t("Ask an administrator to add service checks.")]}
+              footer="https://docs.librenms.org/Extensions/Services/"
+            />
+          ) : (
+            <Empty>{t("No services match these filters.")}</Empty>
+          )
         )}
       </div>
       <Pager page={current} pages={pages} total={rows.length} size={PAGE_SIZE} onPage={setPage} />
+
+      <ServiceDialog open={!!editing} onClose={() => setEditing(null)} service={editing?.service ?? null} />
+      <ConfirmDialog
+        open={!!deleting} onClose={() => setDeleting(null)}
+        title={t("Delete this service check?")} body={t("It will stop being monitored. This cannot be undone.")} confirmLabel={t("Delete")}
+        onConfirm={() => remove.mutateAsync(deleting!.service_id!)}
+      />
     </div>
   );
 }

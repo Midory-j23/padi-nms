@@ -25,6 +25,7 @@ const later = (title: string) => (
 
 // Charts pull in a large library, so load that page only when it is opened.
 const Performance = lazy(() => import("./pages/Performance"));
+const Rules = lazy(() => import("./pages/Rules"));
 const Metrics = lazy(() => import("./pages/Metrics"));
 
 /** Admin-only pages. The backend enforces this too; this just avoids showing a page that cannot work. */
@@ -46,6 +47,7 @@ export default function App() {
         <Route path="devices/:id" element={<DeviceDetail />} />
         <Route path="ports" element={<Ports />} />
         <Route path="alerts" element={<Alerts />} />
+        <Route path="rules" element={<Rules />} />
         <Route path="availability" element={<Availability />} />
         <Route path="services" element={<Services />} />
         <Route path="logs" element={<Logs />} />

@@ -5,6 +5,8 @@ export type Source = "live" | "mock";
 export interface Envelope<T> {
   source: Source;
   data: T;
+  /** Alerts only: how many alert rules LibreNMS has (null = could not be read). */
+  rules?: number | null;
 }
 
 export interface Health {
@@ -95,6 +97,10 @@ export interface Service {
   service_status?: number | string; // LibreNMS: 0 ok, 1 warning, 2 critical
   service_message?: string;
   service_changed?: number; // epoch seconds
+  service_ip?: string;
+  service_param?: string;
+  service_ignore?: number | string;
+  service_disabled?: number | string;
   hostname?: string;
 }
 export interface LogEntry {
@@ -138,4 +144,59 @@ export interface ManagedUser extends AuthUser {
   last_login: number | null;
   sessions: number;
   online: boolean;
+}
+
+export type RuleSeverity = "ok" | "warning" | "critical";
+
+export interface BuilderCondition {
+  id?: string;
+  field: string;
+  type?: string;
+  operator: string;
+  value?: string;
+}
+export interface RuleBuilder {
+  condition: "AND" | "OR";
+  rules: (BuilderCondition | RuleBuilder)[];
+  valid?: boolean;
+}
+
+export interface AlertRule {
+  id: number;
+  name: string;
+  severity: RuleSeverity;
+  disabled: boolean;
+  builder: RuleBuilder | null; // null = an older rule format that only LibreNMS can edit
+  mute: boolean;
+  count: number; // -1 = no limit
+  delay: number; // seconds
+  interval: number; // seconds
+  invert: boolean;
+  notes: string;
+  devices: number[] | null; // LibreNMS does not normally report this
+}
+
+export interface RuleInput {
+  name: string;
+  severity: RuleSeverity;
+  builder: RuleBuilder;
+  scope: "all" | "devices";
+  devices: number[];
+  disabled: boolean;
+  mute: boolean;
+  count: number;
+  delay: number;
+  interval: number;
+  notes: string;
+}
+
+export interface ServiceInput {
+  device?: string;
+  type: string;
+  name: string;
+  ip: string;
+  desc: string;
+  param: string;
+  ignore: boolean;
+  disabled: boolean;
 }
