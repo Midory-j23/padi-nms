@@ -71,6 +71,8 @@ export default function NetworkMap() {
       if (!dup) e.ports.push(pair);
       edgeMap.set(key, e);
     }
+    // Every device is on the map, also those with no discovered links (printers and most end devices have none).
+    devs.forEach((d) => ensureDevice(d.device_id));
     return { nodes: [...nodeMap.values()], edges: [...edgeMap.values()] };
   }, [topo.data, devices.data, t]);
 
@@ -111,8 +113,14 @@ export default function NetworkMap() {
       </div>
       <ErrorNote error={topo.error} />
 
-      {!topo.isLoading && nodes.length === 0 ? (
-        <Panel title={t("Topology")}><Empty>{t("No neighbour links found. Enable LLDP or CDP on your switches and run discovery in LibreNMS.")}</Empty></Panel>
+      {!topo.isLoading && !devices.isLoading && nodes.length > 0 && edges.length === 0 && (
+        <div className="rounded-md border border-line bg-panel px-4 py-3 text-sm text-dim" role="note">
+          {t("No links between devices have been discovered yet, so the devices are shown without connections. LibreNMS finds links through LLDP or CDP on switches and routers; printers and most end devices do not provide them.")}
+        </div>
+      )}
+
+      {!topo.isLoading && !devices.isLoading && nodes.length === 0 ? (
+        <Panel title={t("Topology")}><Empty>{t("No devices yet.")}</Empty></Panel>
       ) : (
         <div className="grid gap-5 lg:grid-cols-4">
           <div className="relative overflow-hidden rounded-lg border border-line bg-panel lg:col-span-3">

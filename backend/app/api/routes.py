@@ -736,27 +736,18 @@ async def delete_service(service_id: int, user: dict = Depends(current_user)):
 # ---------- topology ----------
 @router.get("/topology")
 async def topology():
-    links, devs = await asyncio.gather(lnms.get("/resources/links"), lnms.get("/devices", {"type": "all"}, ttl=60))
-    nodes = {str(d["device_id"]): {"id": str(d["device_id"]), "hostname": d.get("hostname"),
-                                   "status": d.get("status"), "managed": True}  # `status` UNVERIFIED field
-             for d in devs.get("devices", []) if "device_id" in d}
-    edges, seen = [], set()
+    """Neighbour links LibreNMS discovered (LLDP / CDP / ...), with port names filled in. No links is a normal,
+    empty answer: many devices (printers, copiers, PCs) do not announce neighbours."""
+    links, ports = await asyncio.gather(_soft(lnms.get("/resources/links", ttl=60)),
+                                        _optional(lnms.get("/ports", {"columns": "port_id,ifName"}, ttl=300)))
+    names = {str(p.get("port_id")): p.get("ifName") for p in ports.get("ports", []) if isinstance(p, dict)}
+    out = []
     for l in links.get("links", []):
-        a = str(l.get("local_device_id"))
-        rid = l.get("remote_device_id")
-        b = str(rid) if rid is not None else f"ext:{l.get('remote_hostname')}"
-        if a not in nodes:
-            nodes[a] = {"id": a, "hostname": None, "status": None, "managed": True}
-        if b not in nodes:
-            nodes[b] = {"id": b, "hostname": l.get("remote_hostname"), "status": None, "managed": rid is not None}
-        key = tuple(sorted([(a, str(l.get("local_port_id"))), (b, str(l.get("remote_port_id")))]))
-        if key in seen:
+        if not isinstance(l, dict):
             continue
-        seen.add(key)
-        edges.append({"id": l.get("id"), "source": a, "target": b, "local_port_id": l.get("local_port_id"),
-                      "remote_port_id": l.get("remote_port_id"), "remote_port": l.get("remote_port"),
-                      "protocol": l.get("protocol"), "active": l.get("active")})
-    return ok({"nodes": list(nodes.values()), "edges": edges})
+        out.append({**l, "local_port": l.get("local_port") or names.get(str(l.get("local_port_id"))),
+                    "remote_port": l.get("remote_port") or names.get(str(l.get("remote_port_id")))})
+    return ok({"links": out})
 
 
 # ---------- graph images (historical traffic until a metric store is wired in) ----------

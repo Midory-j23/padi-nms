@@ -641,4 +641,5 @@ export const fa: Record<string, string> = {
   "The description or name is not valid.": "توضیحات یا نام معتبر نیست.",
   "Choose the device the check runs on.": "دستگاهی را که بررسی روی آن اجرا می‌شود انتخاب کنید.",
   "Manage rules": "مدیریت قوانین",
+  "No links between devices have been discovered yet, so the devices are shown without connections. LibreNMS finds links through LLDP or CDP on switches and routers; printers and most end devices do not provide them.": "هنوز هیچ پیوندی بین دستگاه‌ها شناسایی نشده است، بنابراین دستگاه‌ها بدون اتصال نمایش داده می‌شوند. LibreNMS پیوندها را از راه LLDP یا CDP روی سوئیچ‌ها و روترها پیدا می‌کند؛ چاپگرها و بیشتر دستگاه‌های انتهایی این اطلاعات را نمی‌دهند.",
 };

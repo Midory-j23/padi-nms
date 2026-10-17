@@ -14,15 +14,17 @@ function Password({ label, value, onChange, autoComplete, id }: { label: string;
   return (
     <label className="block text-sm" htmlFor={id}>
       {label}
-      <span className="relative mt-1 block">
+      {/* The field is always left-to-right, so the button and the padding must use the same fixed side
+          (otherwise, on a right-to-left page, the button lands on the left and covers the text). */}
+      <span className="relative mt-1 block" dir="ltr">
         <input
           id={id} type={show ? "text" : "password"} value={value} onChange={(e) => onChange(e.target.value)}
           autoComplete={autoComplete} dir="ltr" required
-          className="block w-full rounded-md border border-line bg-bg py-2.5 pe-11 ps-3 text-sm"
+          className="block w-full rounded-md border border-line bg-bg py-2.5 pl-3 pr-11 text-sm"
         />
         <button
           type="button" onClick={() => setShow((s) => !s)} aria-label={show ? t("Hide password") : t("Show password")}
-          className="absolute inset-y-0 end-0 grid w-10 place-items-center text-dim hover:text-ink"
+          className="absolute inset-y-0 right-0 grid w-10 place-items-center text-dim hover:text-ink"
         >
           {show ? <EyeOff size={16} /> : <Eye size={16} />}
         </button>

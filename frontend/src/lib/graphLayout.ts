@@ -1,8 +1,12 @@
 export interface LNode { id: string; x: number; y: number }
 export interface LEdge { a: string; b: string }
 
+// Keep nodes (and their labels) clear of the edges and of the zoom buttons in the top corner.
+const MARGIN_X = 70;
+const MARGIN_Y = 55;
+
 // Small deterministic force layout (no dependencies). Good enough for a few hundred nodes.
-export function layout(ids: string[], edges: LEdge[], w = 1000, h = 700): Map<string, LNode> {
+function forceLayout(ids: string[], edges: LEdge[], w: number, h: number): Map<string, LNode> {
   const n = ids.length;
   const nodes = ids.map((id, i) => {
     const ang = (i / Math.max(n, 1)) * Math.PI * 2;
@@ -42,10 +46,38 @@ export function layout(ids: string[], edges: LEdge[], w = 1000, h = 700): Map<st
       const d = Math.max(Math.hypot(nd.dx, nd.dy), 0.01);
       const m = Math.min(d, temp);
       nd.x += (nd.dx / d) * m; nd.y += (nd.dy / d) * m;
-      nd.x = Math.max(40, Math.min(w - 40, nd.x));
-      nd.y = Math.max(40, Math.min(h - 40, nd.y));
+      nd.x = Math.max(MARGIN_X, Math.min(w - MARGIN_X, nd.x));
+      nd.y = Math.max(MARGIN_Y, Math.min(h - MARGIN_Y, nd.y));
     }
     temp *= 0.98;
   }
   return new Map(nodes.map((nd) => [nd.id, { id: nd.id, x: nd.x, y: nd.y }]));
+}
+
+/** Devices with no links go into a tidy grid; linked devices use the force layout above it. */
+export function layout(ids: string[], edges: LEdge[], w = 1000, h = 700): Map<string, LNode> {
+  const linked = new Set<string>();
+  edges.forEach((e) => { linked.add(e.a); linked.add(e.b); });
+  const withLinks = ids.filter((id) => linked.has(id));
+  const alone = ids.filter((id) => !linked.has(id));
+  const out = new Map<string, LNode>();
+
+  // Where the grid goes: the whole map when nothing is linked, otherwise the band below the linked devices.
+  const gridTop = withLinks.length ? h * 0.7 : MARGIN_Y;
+  if (withLinks.length) {
+    const top = forceLayout(withLinks, edges, w, h * 0.66);
+    top.forEach((n, id) => out.set(id, n));
+  }
+  if (alone.length) {
+    const usableW = w - 2 * MARGIN_X;
+    const usableH = h - gridTop - MARGIN_Y;
+    const cols = Math.max(1, Math.min(alone.length, Math.round(Math.sqrt((alone.length * usableW) / Math.max(usableH, 1)))));
+    const rows = Math.ceil(alone.length / cols);
+    const stepX = cols > 1 ? Math.min(usableW / (cols - 1), 170) : 0;
+    const stepY = rows > 1 ? Math.min(usableH / (rows - 1), 110) : 0;
+    const startX = w / 2 - (stepX * (cols - 1)) / 2;
+    const startY = withLinks.length ? gridTop : h / 2 - (stepY * (rows - 1)) / 2;
+    alone.forEach((id, i) => out.set(id, { id, x: startX + (i % cols) * stepX, y: startY + Math.floor(i / cols) * stepY }));
+  }
+  return out;
 }
